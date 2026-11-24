@@ -16,3 +16,5 @@ v0.4.1 : native brushed metal, screws, vent patterns, metallic dials, analog bac
 v0.5.0: individualized metal finish, trim and cap styles by model ID; dedicated Analog page reachable from rack or detail. Retain rack dimensions and all existing pages. Compatibility / Analog switch. FET All Buttons appears only on FET models. No image assets.
 
 v0.6.0: PRO page for multiband/spectral, bands and sidechain subpages, six independent bands, FFT controls, live gain reduction. Existing XL dimensions preserved; verify actual host layout.
+
+v0.7.0: Intelligence button opens three paginated pages; DNA asynchronous local measurements; Match capture and explicit apply; Analyzer real audio telemetry. Existing 1600x930 logical layout preserved.

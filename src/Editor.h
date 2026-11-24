@@ -1,4 +1,5 @@
 #pragma once
+#include <thread>
 #include "History.h"
 #include <functional>
 #include <vector>
@@ -27,9 +28,11 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  using R=clskin::R;
  using AP=Processor::APVTS;
  Processor& p;
- enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis,Advanced,Character,Pro};
+ enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis,Advanced,Character,Pro,Intelligence};
  Screen screen=Screen::Rack;
- int selected=0,proBand=0;bool proEQPage=false;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;
+ int selected=0,proBand=0;
+ int intelPage=0,dnaA=0,dnaB=1,matchGoal=0,matchChoice=0,analyzerMode=0;bool dnaAnalog=true,dnaMeasuredAnalog=true,telemetryValid=false;std::array<liberty::DNAResult,60> dna{};std::thread dnaThread;std::atomic<int> dnaProgress{0};std::atomic<bool> dnaCancel{false};liberty::TelemetrySnapshot telemetryFrame{};std::array<float,1025> inSpectrum{},outSpectrum{};
+bool proEQPage=false;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;
  std::array<std::array<float,120>,8> grHistory{};int grHead=0;bool french=true,viewB=false;
  juce::ValueTree snapshotA,snapshotB;
  struct Hot {R bounds;std::function<void()> click;juce::RangedAudioParameter* param=nullptr;};
@@ -186,7 +189,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"SPECTRAL & MULTIBAND PRO  /  v0.6.0",R{108,86,500,20},15,muted);
+  drawLabel(g,"INTELLIGENT DYNAMICS  /  v0.7.0",R{108,86,500,20},15,muted);
   button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
@@ -194,6 +197,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   button(g,R{1402,32,157,48},french?u("Français"):"English",[this]{french=!french;},false,false);
   button(g,R{1128,32,151,48},"PRESETS 400",[this]{presetPage=0;screen=Screen::Presets;},false,screen==Screen::Presets);
   if(p.learnTarget.load()>=0)drawLabel(g,tr("MIDI LEARN : bougez un CC","MIDI LEARN: move a CC"),R{710,83,650,28},18,amber,false,juce::Justification::centred);
+  button(g,R{1402,84,157,27},"INTELLIGENCE",[this]{screen=Screen::Intelligence;},false,screen==Screen::Intelligence,13);
   line(g,20,118,1580,118,goldDark,1.5f);
  }
  void board(juce::Graphics& g){
@@ -427,7 +431,67 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,tr("Réduction réelle - dernières 6 s","Actual reduction - last 6 s"),R{825,280,610,32},20,cream,false,juce::Justification::centred);
   drawLabel(g,tr("Point rouge : niveau détecté et réduction réelle. Modes adaptatifs, filtrés et deux bandes : réponse dépendante du signal.","Red dot: detector level and actual gain reduction. Adaptive, filtered and dual-band modes are signal-dependent."),R{120,798,1370,50},19,muted,false,juce::Justification::centred);
  }
- void timerCallback()override{for(int i=0;i<8;++i)grHistory[i][grHead]=p.meters[i].load();grHead=(grHead+1)%120;repaint();}
+ void launchDNA(){
+  if(dnaProgress.load()>0&&dnaProgress.load()<60)return;if(dnaThread.joinable())dnaThread.join();dnaCancel.store(false);dnaProgress.store(1);dnaMeasuredAnalog=dnaAnalog;bool mode=dnaAnalog;
+  dnaThread=std::thread([this,mode]{for(int i=0;i<60;++i){if(dnaCancel.load())return;dna[size_t(i)]=liberty::measureDNA(i,mode);dnaProgress.store(i==59?60:std::max(1,i+1),std::memory_order_release);}});
+ }
+ void chooseDNA(bool first){juce::PopupMenu menu;for(int i=0;i<60;++i)menu.addItem(i+1,liberty::models[i].name,true,i==(first?dnaA:dnaB));auto safe=juce::Component::SafePointer<Editor>(this);menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),[safe,first](int v){if(safe==nullptr||v<1||v>60)return;if(first)safe->dnaA=v-1;else safe->dnaB=v-1;safe->repaint();});}
+ void applyMatch(const liberty::MatchResult& result,bool chain){
+  if(chain&&(selected>=7||on(selected+1)))return;
+  auto apply=[&](int slot,int modelId,float threshold,float ratio,float attack,float release){setRaw(slot,"model",float(modelId));setRaw(slot,"threshold",threshold);setRaw(slot,"ratio",ratio);setRaw(slot,"attack",attack);setRaw(slot,"release",release);setRaw(slot,"makeup",0);setRaw(slot,"mix",1);setRaw(slot,"color",0);for(auto key:{"analog","pro","allButtons","external","stereo","auto","delta","scListen"})setRaw(slot,key,0);setRaw(slot,"on",1);};
+  apply(selected,result.model,result.threshold,result.ratio,result.attack,result.release);
+  if(chain){apply(selected+1,result.second,result.secondThreshold,result.secondRatio,result.secondAttack,result.secondRelease);set(p.state.getParameter("parallel"),0);}
+  screen=Screen::Rack;
+ }
+ void intelligence(juce::Graphics& g){
+  using namespace clskin;panel(g,"INTELLIGENT DYNAMICS");
+  const char* labels[]={"COMPRESSOR DNA","COMPRESSOR MATCH","ANALYZER PRO"};for(int i=0;i<3;++i)button(g,R{125.f+i*450,235,435,45},labels[i],[this,i]{intelPage=i;},false,intelPage==i,20);
+  if(intelPage==0){
+   bool running=dnaProgress.load()>0&&dnaProgress.load()<60,ready=dnaProgress.load(std::memory_order_acquire)==60;
+   button(g,R{125,300,210,42},dnaAnalog?"ANALOG":"LEGACY",[this,running]{if(!running)dnaAnalog=!dnaAnalog;},false,dnaAnalog);
+   button(g,R{350,300,430,42},running?tr("MESURE EN COURS","MEASURING"):tr("MESURER LES 60 MODÈLES","MEASURE ALL 60 MODELS"),[this]{launchDNA();},false,running);
+   drawLabel(g,juce::String(ready?60:std::max(0,dnaProgress.load()-1))+" / 60",R{805,300,625,42},20,muted);
+   button(g,R{125,365,630,44},juce::String("A : ")+liberty::models[dnaA].name,[this]{chooseDNA(true);},false,true);
+   button(g,R{770,365,675,44},juce::String("B : ")+liberty::models[dnaB].name,[this]{chooseDNA(false);},false,false);
+   if(!ready){drawLabel(g,tr("Lancer la mesure DSP hors du thread audio.","Run DSP measurements off the audio thread."),R{125,440,1320,260},25,muted,false,juce::Justification::centred);return;}
+   const auto a=dna[size_t(dnaA)],b=dna[size_t(dnaB)];
+   const float av[]={a.attackMs,a.releaseMs,a.gr,a.peakLoss,a.rmsLoss,a.h2,a.h3},bv[]={b.attackMs,b.releaseMs,b.gr,b.peakLoss,b.rmsLoss,b.h2,b.h3};
+   juce::String names[]={tr("Attaque 63 %","Attack 63%"),tr("Retour 37 %","Release 37%"),tr("Réduction stabilisée","Steady reduction"),tr("Atténuation crête","Peak loss"),tr("Atténuation RMS","RMS loss"),"H2 / H1","H3 / H1"};
+   for(int i=0;i<7;++i){float y=430.f+49*i;surface(g,R{125,y,1320,44},navy,midnight,4,goldDark);drawLabel(g,names[i],R{141,y,340,44},19,cream);auto unit=i<2?" ms":i<5?" dB":" %";auto format=[&](float v){return juce::String(v,i<2?0:i<5?1:3)+unit;};drawLabel(g,format(av[i]),R{500,y,340,44},21,amber,false,juce::Justification::centred,true);drawLabel(g,format(bv[i]),R{965,y,340,44},21,goldLight,false,juce::Justification::centred,true);}
+   drawLabel(g,tr("Test 48 kHz / 1 kHz, seuil -24 dB, ratio 4:1, attaque 10 ms, retour 100 ms ; H2/H3 à ratio 1:1.","48 kHz / 1 kHz test, -24 dB threshold, 4:1 ratio, 10 ms attack, 100 ms release; H2/H3 at 1:1."),R{125,786,1320,38},16,muted);
+   drawLabel(g,(dnaMeasuredAnalog?"ANALOG":"LEGACY")+tr("  /  Temps plafonnés à 500 et 2000 ms. Mesures du logiciel, pas du matériel."," / Times capped at 500 and 2000 ms. Software measurements, not hardware."),R{125,829,1320,35},16,muted);return;
+  }
+  if(intelPage==1){
+   int progress=p.telemetry.progress.load(std::memory_order_acquire);
+   button(g,R{125,302,295,48},tr("CAPTURER 4 SECONDES","CAPTURE 4 SECONDS"),[this]{p.telemetry.progress.store(0);p.telemetry.request.store(true);matchChoice=0;},false,progress>=0&&progress<100,17);
+   button(g,R{432,302,140,48},tr("ANNULER","CANCEL"),[this]{p.telemetry.cancel.store(true);p.telemetry.request.store(false);p.telemetry.progress.store(-1);});
+   drawLabel(g,progress<0?tr("En attente du signal","Waiting for signal"):juce::String(progress)+" %",R{590,302,330,48},21,cream);
+   auto f=p.telemetry.features();if(progress!=100){drawLabel(g,tr("Lancez la lecture dans le DAW, puis capturez le signal entrant.","Start playback in the DAW, then capture the incoming signal."),R{125,400,1320,250},25,muted,false,juce::Justification::centred);return;}
+   if(f.rms<-60){drawLabel(g,tr("Signal trop faible : relancer une capture avec un signal audible.","Signal too quiet: capture again with audible input."),R{125,400,1320,180},25,muted,false,juce::Justification::centred);return;}
+   drawLabel(g,"RMS "+juce::String(f.rms,1)+" dB  /  PEAK "+juce::String(f.peak,1)+" dB  /  CREST "+juce::String(f.crest,1)+" dB",R{125,368,1320,38},22,cream);
+   drawLabel(g,tr("Énergie grave filtrée : ","Filtered bass energy: ")+juce::String(f.low*100,0)+" %   /   "+tr("Énergie aiguë filtrée : ","Filtered treble energy: ")+juce::String(f.high*100,0)+" %",R{125,410,1320,32},18,muted);
+   juce::String goals[]={tr("NIVELLEMENT","LEVELING"),"PUNCH",tr("CRÊTES","PEAKS"),"BUS GLUE"};for(int i=0;i<4;++i)button(g,R{125.f+i*333,454,320,44},goals[i],[this,i]{matchGoal=i;matchChoice=0;},false,matchGoal==i);
+   auto results=liberty::matchSignal(f,matchGoal);for(int i=0;i<3;++i){auto a=results[i];float y=515.f+i*60;button(g,R{125,y,395,48},juce::String(i+1)+" / "+liberty::models[a.model].name,[this,i]{matchChoice=i;},false,matchChoice==i,19);drawLabel(g,juce::String(a.threshold,1)+" dB / "+juce::String(a.ratio,1)+":1 / "+juce::String(a.attack,1)+" ms / "+juce::String(a.release,0)+" ms",R{540,y,905,48},21,cream);}
+   auto a=results[matchChoice];drawLabel(g,tr("Slot cible : ","Target slot: ")+juce::String(selected+1)+tr("  /  Chaîne proposée : "," / Suggested chain: ")+liberty::models[a.model].name+" > "+liberty::models[a.second].name,R{125,704,1320,37},20,cream);
+   button(g,R{125,750,95,46},"<",[this]{selected=(selected+7)%8;});button(g,R{230,750,95,46},">",[this]{selected=(selected+1)%8;});
+   button(g,R{345,750,470,46},tr("REMPLACER LE SLOT CIBLE","REPLACE TARGET SLOT"),[this,a]{applyMatch(a,false);},true,false,17);
+   bool free=selected<7&&!on(selected+1);button(g,R{830,750,615,46},free?tr("APPLIQUER CHAÎNE / SÉRIE","APPLY CHAIN / SERIES"):tr("CHAÎNE : SLOT SUIVANT OCCUPÉ OU ABSENT","CHAIN: NEXT SLOT OCCUPIED OR MISSING"),[this,a,free]{if(free)applyMatch(a,true);},true,false,16);
+   drawLabel(g,tr("Recommandations locales heuristiques, sans IA distante. Appliquer remplace le slot ; chaîne passe le rack en série.","Local heuristic recommendations, no remote AI. Apply replaces slot; chain switches rack to series."),R{125,820,1320,44},16,muted);return;
+  }
+  juce::String tabs[]={tr("FORMES D'ONDE","WAVEFORMS"),tr("SPECTRE / HARMONIQUES","SPECTRUM / HARMONICS"),"STEREO"};for(int i=0;i<3;++i)button(g,R{125.f+i*445,300,430,40},tabs[i],[this,i]{analyzerMode=i;},false,analyzerMode==i,17);
+  for(int k=0;k<2;++k){float x=125.f+k*670;surface(g,R{x,355,655,107},navy,midnight,5,goldDark);drawLabel(g,k==0?tr("ENTRÉE ALIGNÉE","ALIGNED INPUT"):tr("SORTIE","OUTPUT"),R{x+12,360,630,24},16,muted,false,juce::Justification::centred);
+   drawLabel(g,"RMS "+juce::String(p.telemetry.rms[k].load(),1)+" dB  /  TP* "+juce::String(p.telemetry.truePeak[k].load(),1)+" dBTP",R{x+10,387,635,32},21,cream,false,juce::Justification::centred);
+   juce::String mo=p.telemetry.meterReady.load()?juce::String(p.telemetry.momentary[k].load(),1):"--",st=p.telemetry.shortReady.load()?juce::String(p.telemetry.shortTerm[k].load(),1):"--";
+   drawLabel(g,"LUFS M* "+mo+"   /   LUFS S* "+st,R{x+10,423,635,28},19,cream,false,juce::Justification::centred);}
+  R plot{125,478,1320,320};surface(g,plot,navy,midnight,6,goldDark);
+  if(!telemetryValid){drawLabel(g,tr("En attente de données audio","Waiting for audio data"),plot,24,muted,false,juce::Justification::centred);}
+  else if(analyzerMode==0){for(int k=0;k<2;++k){float center=plot.getY()+plot.getHeight()*(k==0?.25f:.75f);line(g,plot.getX(),center,plot.getRight(),center,muted.withAlpha(.5f));auto& a=k==0?telemetryFrame.inL:telemetryFrame.outL;auto& b=k==0?telemetryFrame.inR:telemetryFrame.outR;juce::Path path;for(int i=0;i<2048;i+=4){float x=plot.getX()+plot.getWidth()*i/2047,y=center-std::clamp((a[i]+b[i])*.5f,-1.f,1.f)*plot.getHeight()*.22f;if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}g.setColour(k==0?goldLight:amber);g.strokePath(path,juce::PathStrokeType(1.6f));}}
+  else if(analyzerMode==1){float rate=p.telemetry.sampleRate.load(),maxHz=std::min(20000.f,rate*.5f);for(int k=0;k<2;++k){auto& data=k==0?inSpectrum:outSpectrum;juce::Path path;for(int i=0;i<500;++i){float frac=i/499.f,hz=20*std::pow(maxHz/20,frac),bin=hz*2048/rate;int j=std::clamp(int(bin),0,1023);float val=data[j]+(data[j+1]-data[j])*std::clamp(bin-j,0.f,1.f);float x=plot.getX()+plot.getWidth()*frac,y=plot.getBottom()-plot.getHeight()*std::clamp((val+100)/100,0.f,1.f);if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}g.setColour(k==0?goldLight:amber);g.strokePath(path,juce::PathStrokeType(1.5f));}
+   int fundamental=3;for(int i=4;i<340;++i)if(outSpectrum[i]>outSpectrum[fundamental])fundamental=i;float peak=outSpectrum[fundamental];juce::String h="H2 / H1: --   H3 / H1: --";if(peak>-55&&outSpectrum[fundamental*2]<peak&&outSpectrum[fundamental*3]<peak){auto local=[&](int bin){return std::max({outSpectrum[bin-1],outSpectrum[bin],outSpectrum[bin+1]});};h="H2 / H1: "+juce::String(local(fundamental*2)-peak,1)+" dBc    H3 / H1: "+juce::String(local(fundamental*3)-peak,1)+" dBc";}drawLabel(g,h,R{140,806,1300,25},17,cream);}
+  else{float cx=plot.getCentreX(),cy=plot.getCentreY();line(g,cx-145,cy,cx+145,cy,muted);line(g,cx,cy-145,cx,cy+145,muted);g.setColour(amber.withAlpha(.65f));for(int i=0;i<2048;i+=3){float l=telemetryFrame.outL[i],r=telemetryFrame.outR[i];float x=cx+145*std::clamp((l-r)*.5f,-1.f,1.f),y=cy-145*std::clamp((l+r)*.5f,-1.f,1.f);g.fillEllipse(x-1,y-1,2,2);}drawLabel(g,tr("Corrélation : ","Correlation: ")+juce::String(p.telemetry.correlation.load(),3),R{140,806,1300,25},19,cream);}
+  drawLabel(g,tr("* LUFS M/S estimés, TP estimé par interpolation 4x ; harmoniques relatives au pic dominant, pas un THD sur musique.","* Estimated LUFS M/S, TP estimated by 4x interpolation; harmonics relative to dominant peak, not music THD."),R{125,836,1320,38},15,muted);
+ }
+ void timerCallback()override{for(int i=0;i<8;++i)grHistory[i][grHead]=p.meters[i].load();grHead=(grHead+1)%120;bool active=screen==Screen::Intelligence&&intelPage==2;p.telemetry.enabled.store(active);if(active){liberty::TelemetrySnapshot next;if(p.telemetry.snapshot(next)){telemetryFrame=next;telemetryValid=true;if(analyzerMode==1){inSpectrum=liberty::spectrum(next.inL,next.inR);outSpectrum=liberty::spectrum(next.outL,next.outR);}}}else telemetryValid=false;repaint();}
  juce::Point<float> logical(juce::Point<float> pt)const{return {(pt.x-xOffset)/scale,(pt.y-yOffset)/scale};}
 public:
  explicit Editor(Processor& processor):AudioProcessorEditor(&processor),p(processor){
@@ -448,9 +512,9 @@ public:
   snapshotA=p.state.copyState();snapshotB=snapshotA.createCopy();
   setSize(int(std::floor(1600*initialScale)),int(std::floor(930*initialScale)));startTimerHz(20);
  }
- ~Editor()override{stopTimer();if(dragging)dragging->endChangeGesture();}
+ ~Editor()override{stopTimer();p.telemetry.enabled.store(false);p.telemetry.cancel.store(true);dnaCancel.store(true);if(dnaThread.joinable())dnaThread.join();if(dragging)dragging->endChangeGesture();}
  void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;presetSearch.setBounds(juce::Rectangle<float>{382,245,1090,43}.transformedBy(juce::AffineTransform::scale(scale).translated(xOffset,yOffset)).toNearestInt());presetSearch.setFont(juce::Font(juce::FontOptions(20.f*scale)));}
- void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;case Screen::Advanced:advanced(g);break;case Screen::Character:characterPage(g);break;case Screen::Pro:proPage(g);break;}}
+ void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;case Screen::Advanced:advanced(g);break;case Screen::Character:characterPage(g);break;case Screen::Pro:proPage(g);break;case Screen::Intelligence:intelligence(g);break;}}
  void mouseDown(const juce::MouseEvent& e)override{auto pt=logical(e.position);if(e.mods.isPopupMenu()){for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)&&it->param){int idx=p.midiIndex(it->param);if(idx<0)return;juce::PopupMenu menu;menu.addItem(1,"MIDI Learn");menu.addItem(2,tr("Effacer l'affectation","Clear mapping"),p.midiCC[idx].load()>=0);menu.addItem(3,tr("Annuler l'apprentissage","Cancel learn"),p.learnTarget.load()>=0);auto safe=juce::Component::SafePointer<Editor>(this);menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),[safe,idx](int choice){if(safe==nullptr)return;if(choice==1)safe->p.learnTarget.store(idx);if(choice==2)safe->p.midiCC[idx].store(-1);if(choice==3)safe->p.learnTarget.store(-1);safe->repaint();});return;}return;}if(!e.mods.isLeftButtonDown())return;for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param){dragging=it->param;startValue=dragging->getValue();startY=pt.y;dragging->beginChangeGesture();}else if(it->click){auto f=it->click;f();syncSearch();}repaint();return;}}
  void mouseDrag(const juce::MouseEvent& e)override{if(dragging){dragging->setValueNotifyingHost(juce::jlimit(0.f,1.f,startValue+(startY-logical(e.position).y)/160.f));repaint();}}
  void mouseUp(const juce::MouseEvent&)override{if(dragging){dragging->endChangeGesture();dragging=nullptr;}}

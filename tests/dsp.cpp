@@ -1,5 +1,6 @@
 #include "Dynamics.h"
 #include "FactoryPresets.h"
+#include "Intelligence.h"
 #include <set>
 #include <sstream>
 #include <iostream>
@@ -70,6 +71,14 @@ int main(){
  for(auto& b:ps.bands){b.mute=false;b.ratio=4;}ps.link=0;pm.reset();for(int n=0;n<48000;++n){a=.8f;b=.01f;pm.process(a,b,a,b,ps,48000,0,0,1,1);}require(std::abs(b-.01f)<1e-5f&&a<.8f,"unlinked right unchanged");
  ps.link=1;pm.reset();for(int n=0;n<48000;++n){a=.8f;b=.01f;pm.process(a,b,a,b,ps,48000,0,0,1,1);}require(b<.009f,"linked right follows");
  rack.params={};rack.parallel=true;rack.configureLatency(0,true,4096);int proLatency=rack.latency();for(int n=0;n<=proLatency;++n){l=r=n==0?1.f:0.f;rack.process(l,r);require(std::abs(l-(n==proLatency?1.f:0.f))<1e-6f,"PRO rack delay");}rack.configureLatency(0,false);rack.reset();rack.parallel=false;
+ // Intelligent Dynamics: actual offline DSP measurement, signal features, matched output and meters.
+ for(int i=0;i<modelCount;++i){auto z=measureDNA(i,true);require(std::isfinite(z.gr)&&std::isfinite(z.h2)&&std::isfinite(z.h3)&&std::isfinite(z.rmsLoss),"DNA finite");require(z.attackMs>=1&&z.attackMs<=500&&z.releaseMs>=1&&z.releaseMs<=2000,"DNA time bounds");}
+ auto digitalDNA=measureDNA(7,true),tubeDNA=measureDNA(4,true);require(tubeDNA.h2>digitalDNA.h2+.01f,"DNA distinguishes harmonics");
+ FeatureCapture capture;capture.reset(48000);for(int n=0;n<192000;++n)capture.push(.5f*std::sin(6.283185307179586*n/48.),.5f*std::sin(6.283185307179586*n/48.));auto features=capture.result();require(std::abs(features.rms+9.0309f)<.02f&&std::abs(features.crest-3.0103f)<.02f,"match measures sine");require(capture.progress()==100,"four seconds capture");
+ for(int goal=0;goal<4;++goal){auto matches=matchSignal(features,goal);require(matches[0].model!=matches[1].model&&matches[0].distance<=matches[1].distance&&matches[0].threshold>=-60,"match candidates");}
+ AudioTelemetry telemetry;telemetry.prepare(48000);telemetry.enabled.store(true);for(int block=0;block<1600;++block){telemetry.begin(2);for(int n=0;n<128;++n){float x=.5f*std::sin(6.283185307179586*(block*128+n)/48.);telemetry.sample(x,x,x*.5f,x*.5f);}telemetry.end();}
+ require(telemetry.meterReady.load()&&telemetry.shortReady.load(),"loudness windows");require(std::abs(telemetry.correlation.load()-1)<.001,"stereo correlation");require(std::abs(telemetry.rms[0].load()-telemetry.rms[1].load()-6.0206f)<.02,"rms level difference");require(std::abs(telemetry.momentary[0].load()-telemetry.momentary[1].load()-6.0206f)<.02,"loudness level difference");
+ TelemetrySnapshot shot;require(telemetry.snapshot(shot),"telemetry snapshot");auto fft=spectrum(shot.inL,shot.inR);int peakBin=int(std::max_element(fft.begin(),fft.end())-fft.begin());require(std::abs(peakBin-43)<=1,"FFT tone frequency");
  std::set<std::string> fingerprints;int series=0,parallelCount=0;
  for(int i=0;i<factoryCount;++i){auto p=factoryPreset(i);p.parallel?++parallelCount:++series;std::ostringstream key;key<<p.parallel<<':'<<p.balance;
   require(p.slots[0].enabled,"preset A active");require(!p.parallel||p.slots[4].enabled,"preset B active");

@@ -2,10 +2,12 @@
 #include <juce_dsp/juce_dsp.h>
 #include "Dynamics.h"
 #include "FactoryPresets.h"
+#include "Intelligence.h"
 class Processor final: public juce::AudioProcessor {
 public:
  using APVTS=juce::AudioProcessorValueTreeState;
  APVTS state;
+ liberty::AudioTelemetry telemetry;
  std::array<std::atomic<float>,8> meters{},detectors{};
  std::array<std::array<std::atomic<float>,16>,8> displayMeters{};
  std::array<std::array<std::atomic<float>,6>,8> proMeters{};std::atomic<float> processingRate{48000};
@@ -69,6 +71,7 @@ private:
 public:
  Processor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withInput("Sidechain",juce::AudioChannelSet::stereo(),false).withOutput("Output",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"Parameters",layout()){
   const char* keys[]={"on","model","threshold","ratio","attack","release","makeup","mix","color"};
+  telemetry.end();
   for(int i=0;i<8;++i){meters[i].store(0);for(int j=0;j<9;++j)values[i][j]=state.getRawParameterValue(id(i,keys[j]));}
   parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
   for(auto& cc:midiCC)cc.store(-1);
@@ -99,7 +102,7 @@ public:
   put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);put("masterGain",0);put("masterBypass",0);
  }
  const juce::String getName() const override{return "Compresseur Legends";}
- void prepareToPlay(double sr,int block)override{sampleRate=sr;maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);dryScratch.setSize(2,maxBlock);masterDry.prepare(int(sr*.05)+32768+128);masterDelay=-1;masterGain.reset(sr,.02);masterWet.reset(sr,.02);masterGain.setCurrentAndTargetValue(liberty::gain(outputGain->load()));masterWet.setCurrentAndTargetValue(masterBypass->load()>.5f?0.f:1.f);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
+ void prepareToPlay(double sr,int block)override{sampleRate=sr;telemetry.prepare(float(sr));maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);dryScratch.setSize(2,maxBlock);masterDry.prepare(int(sr*.05)+32768+128);masterDelay=-1;masterGain.reset(sr,.02);masterWet.reset(sr,.02);masterGain.setCurrentAndTargetValue(liberty::gain(outputGain->load()));masterWet.setCurrentAndTargetValue(masterBypass->load()>.5f?0.f:1.f);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
  void releaseResources() override{for(auto& rack:racks)rack.reset();for(auto& m:meters)m.store(0);for(auto& slot:displayMeters)for(auto& m:slot)m.store(0);masterDry.reset();for(auto& slot:proMeters)for(auto& m:slot)m.store(0);}
  bool isBusesLayoutSupported(const BusesLayout& b)const override{const auto main=b.getMainOutputChannelSet();const auto sc=b.getChannelSet(true,1);return b.getMainInputChannelSet()==main&&(main==juce::AudioChannelSet::mono()||main==juce::AudioChannelSet::stereo())&&(sc.isDisabled()||sc==juce::AudioChannelSet::mono()||sc==juce::AudioChannelSet::stereo());}
  void processBlock(juce::AudioBuffer<float>& buffer,juce::MidiBuffer& midi)override{
@@ -118,11 +121,12 @@ public:
   auto* l=main.getWritePointer(0);auto* r=main.getNumChannels()>1?main.getWritePointer(1):nullptr;
   const float* sl=has?side.getReadPointer(0):nullptr;const float* sr=side.getNumChannels()>1?side.getReadPointer(1):sl;
   if(maxBlock<=0)return;
+  const bool analyze=telemetry.begin(r?2:1);
   if(masterDelay!=latency){masterDry.reset();masterDelay=latency;}
   masterGain.setTargetValue(liberty::gain(outputGain->load()));masterWet.setTargetValue(masterBypass->load()>.5f?0.f:1.f);
   for(int offset=0;offset<main.getNumSamples();offset+=maxBlock){
    int n=std::min(maxBlock,main.getNumSamples()-offset);
-   for(int j=0;j<n;++j){int i=offset+j;float dl=l[i],dr=r?r[i]:dl;masterDry.process(dl,dr,latency);dryScratch.setSample(0,j,dl);dryScratch.setSample(1,j,dr);}
+   for(int j=0;j<n;++j){int i=offset+j;float dl=l[i],dr=r?r[i]:dl;telemetry.input(dl,dr);masterDry.process(dl,dr,latency);dryScratch.setSample(0,j,dl);dryScratch.setSample(1,j,dr);}
    if(q==0||!oversamplers[q-1]){for(int j=0;j<n;++j){int i=offset+j;float left=l[i],right=r?r[i]:left;float a=sl?sl[i]:0,b=sr?sr[i]:a;rack.process(left,right,a,b,has);l[i]=left;if(r)r[i]=right;}}
    else{
     for(int j=0;j<n;++j){int i=offset+j;scratch.setSample(0,j,l[i]);scratch.setSample(1,j,r?r[i]:l[i]);scratch.setSample(2,j,sl?sl[i]:0);scratch.setSample(3,j,sr?sr[i]:0);}
@@ -130,7 +134,7 @@ public:
     for(size_t j=0;j<up.getNumSamples();++j)rack.process(ul[j],ur[j],usl[j],usr[j],has);
     oversamplers[q-1]->processSamplesDown(sub);for(int j=0;j<n;++j){l[offset+j]=scratch.getSample(0,j);if(r)r[offset+j]=scratch.getSample(1,j);}
    }
-   for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}}
+   for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}if(analyze)telemetry.sample(dryScratch.getSample(0,j),dryScratch.getSample(1,j),l[i],r?r[i]:l[i]);}
   }
   for(int i=0;i<8;++i){meters[i].store(rack.gr(i),std::memory_order_relaxed);detectors[i].store(rack.detectorLevel(i),std::memory_order_relaxed);for(int group=0;group<16;++group)displayMeters[i][group].store(rack.displayReduction(size_t(i),group),std::memory_order_relaxed);for(int b=0;b<6;++b)proMeters[i][b].store(rack.proBandMeter(size_t(i),b),std::memory_order_relaxed);}
  }
