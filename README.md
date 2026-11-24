@@ -33,3 +33,6 @@ Opt-in PRO for dual/tri/quad-band and spectral models; 2–6 bands, independent 
 
 ## v0.7.0 Intelligent Dynamics (experimental)
 DNA: background editor worker measures all 60 actual software models at 48 kHz with a defined 1 kHz stimulus, attack/release time bounds, GR, RMS/peak loss and H2/H3; select legacy or analog. Match: four-second local input capture, peak/RMS/crest/filtered bass and treble energy, transparent rule-based ranking of broadband candidates for four objectives, explicit apply to selected slot or two-slot serial chain (next slot must be inactive). Analyzer: latency-aligned dry and wet waveforms (2048 samples), 2048-point windowed FFT on UI thread, relative dominant-tone harmonic bins (not reliable THD on music), estimated K-weighted momentary/short-term LUFS and cubic 4x true peak estimates (not certified BS.1770), stereo correlation and vectorscope. Meter collection only when Analyzer page visible; no audio export or remote AI. Existing DSP and 400 presets unchanged. Host and visual tests pending; exact BS.1770 compliance, integrated gated LUFS and CPU benchmark pending.
+
+## v0.7.1
+Correct telemetry frame publication at the end of processBlock; publish completed Match measurements before the 100% flag. Use this revision for validation.

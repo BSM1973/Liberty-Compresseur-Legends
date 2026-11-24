@@ -71,7 +71,6 @@ private:
 public:
  Processor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withInput("Sidechain",juce::AudioChannelSet::stereo(),false).withOutput("Output",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"Parameters",layout()){
   const char* keys[]={"on","model","threshold","ratio","attack","release","makeup","mix","color"};
-  telemetry.end();
   for(int i=0;i<8;++i){meters[i].store(0);for(int j=0;j<9;++j)values[i][j]=state.getRawParameterValue(id(i,keys[j]));}
   parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
   for(auto& cc:midiCC)cc.store(-1);
@@ -136,6 +135,7 @@ public:
    }
    for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}if(analyze)telemetry.sample(dryScratch.getSample(0,j),dryScratch.getSample(1,j),l[i],r?r[i]:l[i]);}
   }
+  telemetry.end();
   for(int i=0;i<8;++i){meters[i].store(rack.gr(i),std::memory_order_relaxed);detectors[i].store(rack.detectorLevel(i),std::memory_order_relaxed);for(int group=0;group<16;++group)displayMeters[i][group].store(rack.displayReduction(size_t(i),group),std::memory_order_relaxed);for(int b=0;b<6;++b)proMeters[i][b].store(rack.proBandMeter(size_t(i),b),std::memory_order_relaxed);}
  }
  bool hasEditor()const override{return true;}
