@@ -9,7 +9,7 @@ public:
  std::array<std::atomic<float>,8> meters{},detectors{};
  std::array<std::array<std::atomic<float>,16>,8> displayMeters{};
  std::atomic<bool> sidechainAvailable{false};
- static constexpr int midiTargets=58;
+ static constexpr int midiTargets=66;
  std::array<std::atomic<int>,midiTargets> midiCC{};
  std::atomic<int> learnTarget{-1};
  std::array<juce::RangedAudioParameter*,midiTargets> midiParams{};
@@ -19,7 +19,7 @@ private:
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;
  juce::AudioBuffer<float> scratch,dryScratch;liberty::SampleDelay masterDry;juce::SmoothedValue<float> masterGain,masterWet;std::atomic<float>* outputGain=nullptr;std::atomic<float>* masterBypass=nullptr;int masterDelay=-1;int maxBlock=0,lastQuality=-1;double sampleRate=48000;
  std::atomic<float>* quality=nullptr;std::atomic<float>* lookahead=nullptr;
- std::array<std::array<std::atomic<float>*,3>,8> advancedValues{};
+ std::array<std::array<std::atomic<float>*,6>,8> advancedValues{};
  static APVTS::ParameterLayout layout(){
   APVTS::ParameterLayout out;
   juce::StringArray names;for(auto& model:liberty::models)names.add(model.name);
@@ -35,6 +35,9 @@ private:
    out.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id(i,"stereo"),1},"Stereo / Mid / Side "+juce::String(i+1),juce::StringArray{"Stereo","Mid","Side"},0));
    out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id(i,"auto"),1},"Auto Gain "+juce::String(i+1),false));
    out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id(i,"delta"),1},"Delta "+juce::String(i+1),false));
+   out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id(i,"analog"),1},"Analog Perfection "+juce::String(i+1),false));
+   addFloat(i,"character","Character",0,1,.01f,.65f);
+   out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id(i,"allButtons"),1},"FET All Buttons "+juce::String(i+1),false));
   }
   out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"parallel",1},juce::String::fromUTF8("Parallèle"),false));
   out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"balance",1},"Balance A/B",juce::NormalisableRange<float>(0,1,.01f),.5f));
@@ -54,7 +57,7 @@ public:
   parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
   for(auto& cc:midiCC)cc.store(-1);
   const char* learnKeys[]={"threshold","ratio","attack","release","makeup","mix","color"};
-  for(int i=0;i<8;++i){externalValues[i]=state.getRawParameterValue(id(i,"external"));detectors[i].store(0);for(int k=0;k<7;++k)midiParams[i*7+k]=state.getParameter(id(i,learnKeys[k]));}midiParams[56]=state.getParameter("balance");midiParams[57]=state.getParameter("masterGain");outputGain=state.getRawParameterValue("masterGain");masterBypass=state.getRawParameterValue("masterBypass");for(auto& slot:displayMeters)for(auto& meter:slot)meter.store(0);quality=state.getRawParameterValue("quality");lookahead=state.getRawParameterValue("lookahead");for(int i=0;i<8;++i){advancedValues[i][0]=state.getRawParameterValue(id(i,"stereo"));advancedValues[i][1]=state.getRawParameterValue(id(i,"auto"));advancedValues[i][2]=state.getRawParameterValue(id(i,"delta"));}
+  for(int i=0;i<8;++i){externalValues[i]=state.getRawParameterValue(id(i,"external"));detectors[i].store(0);for(int k=0;k<7;++k)midiParams[i*7+k]=state.getParameter(id(i,learnKeys[k]));}midiParams[56]=state.getParameter("balance");midiParams[57]=state.getParameter("masterGain");outputGain=state.getRawParameterValue("masterGain");masterBypass=state.getRawParameterValue("masterBypass");for(auto& slot:displayMeters)for(auto& meter:slot)meter.store(0);quality=state.getRawParameterValue("quality");lookahead=state.getRawParameterValue("lookahead");for(int i=0;i<8;++i){advancedValues[i][0]=state.getRawParameterValue(id(i,"stereo"));advancedValues[i][1]=state.getRawParameterValue(id(i,"auto"));advancedValues[i][2]=state.getRawParameterValue(id(i,"delta"));advancedValues[i][3]=state.getRawParameterValue(id(i,"analog"));advancedValues[i][4]=state.getRawParameterValue(id(i,"character"));advancedValues[i][5]=state.getRawParameterValue(id(i,"allButtons"));midiParams[58+i]=state.getParameter(id(i,"character"));}
  }
  int midiIndex(juce::RangedAudioParameter* a)const{for(int i=0;i<midiTargets;++i)if(midiParams[i]==a)return i;return -1;}
  void handleMidi(const juce::MidiBuffer& midi){
@@ -68,7 +71,7 @@ public:
  void loadFactory(int index){
   const auto preset=liberty::factoryPreset(index);
   auto put=[&](const juce::String& key,float value){if(auto* a=state.getParameter(key)){a->beginChangeGesture();a->setValueNotifyingHost(a->convertTo0to1(value));a->endChangeGesture();}};
-  for(int i=0;i<8;++i){const auto& s=preset.slots[size_t(i)];put(id(i,"on"),s.enabled?1.f:0.f);put(id(i,"model"),float(s.model));put(id(i,"threshold"),s.threshold);put(id(i,"ratio"),s.ratio);put(id(i,"attack"),s.attack);put(id(i,"release"),s.release);put(id(i,"makeup"),s.makeup);put(id(i,"mix"),s.mix);put(id(i,"color"),s.color);put(id(i,"external"),0.f);put(id(i,"stereo"),float(s.stereoMode));put(id(i,"auto"),s.autoGain?1.f:0.f);put(id(i,"delta"),s.delta?1.f:0.f);}
+  for(int i=0;i<8;++i){const auto& s=preset.slots[size_t(i)];put(id(i,"on"),s.enabled?1.f:0.f);put(id(i,"model"),float(s.model));put(id(i,"threshold"),s.threshold);put(id(i,"ratio"),s.ratio);put(id(i,"attack"),s.attack);put(id(i,"release"),s.release);put(id(i,"makeup"),s.makeup);put(id(i,"mix"),s.mix);put(id(i,"color"),s.color);put(id(i,"external"),0.f);put(id(i,"stereo"),float(s.stereoMode));put(id(i,"auto"),s.autoGain?1.f:0.f);put(id(i,"delta"),s.delta?1.f:0.f);put(id(i,"analog"),0.f);put(id(i,"character"),.65f);put(id(i,"allButtons"),0.f);}
   put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);put("masterGain",0);put("masterBypass",0);
  }
  const juce::String getName() const override{return "Compresseur Legends";}
@@ -79,7 +82,7 @@ public:
   juce::ScopedNoDenormals guard;handleMidi(midi);midi.clear();
   const int q=std::clamp(int(quality->load()),0,4),factor=1<<q;auto& rack=racks[q];if(q!=lastQuality){rack.reset();if(q&&oversamplers[q-1])oversamplers[q-1]->reset();lastQuality=q;}
   rack.parallel=parallel->load()>.5f;rack.balance=balance->load();
-  for(int i=0;i<8;++i){auto& p=rack.params[i];const auto& v=values[i];p.enabled=v[0]->load()>.5f;p.model=static_cast<int>(v[1]->load());p.threshold=v[2]->load();p.ratio=v[3]->load();p.attack=v[4]->load();p.release=v[5]->load();p.makeup=v[6]->load();p.mix=v[7]->load();p.color=v[8]->load();rack.external[i]=externalValues[i]->load()>.5f;p.stereoMode=int(advancedValues[i][0]->load());p.autoGain=advancedValues[i][1]->load()>.5f;p.delta=advancedValues[i][2]->load()>.5f;}
+  for(int i=0;i<8;++i){auto& p=rack.params[i];const auto& v=values[i];p.enabled=v[0]->load()>.5f;p.model=static_cast<int>(v[1]->load());p.threshold=v[2]->load();p.ratio=v[3]->load();p.attack=v[4]->load();p.release=v[5]->load();p.makeup=v[6]->load();p.mix=v[7]->load();p.color=v[8]->load();rack.external[i]=externalValues[i]->load()>.5f;p.stereoMode=int(advancedValues[i][0]->load());p.autoGain=advancedValues[i][1]->load()>.5f;p.delta=advancedValues[i][2]->load()>.5f;p.analog=advancedValues[i][3]->load()>.5f;p.character=advancedValues[i][4]->load();p.allButtons=advancedValues[i][5]->load()>.5f;}
   bool spectral=false;for(auto& s:rack.params)if(s.enabled&&liberty::models[size_t(std::clamp(s.model,0,liberty::modelCount-1))].architecture==9)spectral=true;
   int la=int(std::round(sampleRate*lookahead->load()*.001))*factor;rack.configureLatency(la,spectral);
   int latency=rack.latency()/factor+(q&&oversamplers[q-1]?int(std::round(oversamplers[q-1]->getLatencyInSamples())):0);if(latency!=getLatencySamples())setLatencySamples(latency);
@@ -111,7 +114,7 @@ public:
  double getTailLengthSeconds()const override{return 0;}
  int getNumPrograms()override{return 1;}int getCurrentProgram()override{return 0;}void setCurrentProgram(int)override{}const juce::String getProgramName(int)override{return "Initial";}void changeProgramName(int,const juce::String&)override{}
  void getStateInformation(juce::MemoryBlock& data)override{auto tree=state.copyState();for(int i=0;i<midiTargets;++i)tree.setProperty(juce::Identifier("cc"+juce::String(i)),midiCC[i].load(),nullptr);if(auto xml=tree.createXml())copyXmlToBinary(*xml,data);}
- void setStateInformation(const void* data,int size)override{if(auto xml=getXmlFromBinary(data,size))if(xml->hasTagName(state.state.getType())){auto tree=juce::ValueTree::fromXml(*xml);for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(tree.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);state.replaceState(tree); }}
+ void setStateInformation(const void* data,int size)override{if(auto xml=getXmlFromBinary(data,size))if(xml->hasTagName(state.state.getType())){auto tree=juce::ValueTree::fromXml(*xml);for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(tree.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);for(int i=0;i<8;++i)for(auto key:{"analog","character","allButtons"}){auto pid=id(i,key);bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",juce::String(key)=="character"?.65:0.,nullptr);tree.addChild(child,-1,nullptr);}}state.replaceState(tree); }}
 };
 #include "Editor.h"
 juce::AudioProcessorEditor* Processor::createEditor(){return new Editor(*this);}

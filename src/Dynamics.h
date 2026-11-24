@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <complex>
 #include <vector>
+#include "Character.h"
 namespace liberty {
 inline float db(float x){return 20.f*std::log10(std::max(x,1.e-9f));}
 inline float gain(float x){return std::pow(10.f,x*.05f);}
@@ -72,7 +73,25 @@ inline constexpr std::array<Model,modelCount> models {{
  {"Spectral Master",1.5f,1.8f,10.0f,0.2f,0.0f,0.65f,false,9},
  {"Spectral Focus",0.4f,0.65f,2.0f,0.02f,0.0f,0.15f,false,9}
 }};
-struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;int stereoMode=0;bool autoGain=false,delta=false;};
+struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;int stereoMode=0;bool autoGain=false,delta=false;bool analog=false,allButtons=false;float character=.65f;};
+inline Model characterModel(const Parameters& p){
+ Model m=models[size_t(std::clamp(p.model,0,modelCount-1))];if(!p.analog)return m;
+ const auto& c=characterProfile(p.model);float a=std::clamp(p.character,0.f,1.f);
+ m.attackScale*=blend(1,c.attack,a);m.releaseScale*=blend(1,c.release,a);m.knee*=blend(1,c.knee,a);
+ if(c.circuit==Circuit::OPTO){m.memory=blend(m.memory,std::max(m.memory,.68f),a*.55f);m.rms=blend(m.rms,.78f,a*.25f);}
+ else if(c.circuit==Circuit::TUBE){m.knee+=a*3.f;m.memory=blend(m.memory,.65f,a*.3f);}
+ else if(c.circuit==Circuit::DIODE){m.memory=blend(m.memory,.34f,a*.25f);}
+ if(c.circuit==Circuit::FET&&p.allButtons){m.knee=std::max(4.f,m.knee*1.7f);m.attackScale*=.55f;m.releaseScale*=.62f;}
+ return m;
+}
+inline float characterRatio(float over,const Parameters& p){
+ float ratio=std::clamp(p.ratio,1.f,20.f);
+ if(!p.analog)return ratio;const auto c=characterProfile(p.model).circuit;float a=std::clamp(p.character,0.f,1.f);
+ if(c==Circuit::FET&&p.allButtons)return std::max(ratio,12.f);
+ if(c==Circuit::TUBE)return std::min(20.f,1.f+(ratio-1.f)*(1.f+a*.6f*std::clamp(over/24.f,0.f,1.f)));
+ if(c==Circuit::PWM)return std::min(20.f,1.f+(ratio-1.f)*(1.f+a*.12f*std::clamp(over/18.f,0.f,1.f)));
+ return ratio;
+}
 inline float reduction(float over,float ratio,float knee){
  const float slope=1.f-1.f/std::max(1.f,ratio);
  if(knee<=0.f)return std::max(0.f,over)*slope;
@@ -82,11 +101,10 @@ inline float reduction(float over,float ratio,float knee){
 }
 // Nominal static detector-to-output curve; adaptive/weighted/band modes are signal-dependent.
 inline float nominalReduction(float inputDb,const Model& m,const Parameters& p,bool external=false){
- const float ratio=std::clamp(p.ratio,1.f,20.f);
- const float effective=m.feedback?1.f+std::min(100.f,ratio-1.f)*2.f:ratio;
- if(!m.feedback||external)return reduction(inputDb-p.threshold,effective,m.knee);
+ const auto target=[&](float over){float ratio=characterRatio(over,p);float effective=m.feedback?1.f+std::min(100.f,ratio-1.f)*2.f:ratio;return reduction(over,effective,m.knee);};
+ if(!m.feedback||external)return target(inputDb-p.threshold);
  float lo=0,hi=std::max(0.f,inputDb-p.threshold+m.knee);
- for(int i=0;i<20;++i){float mid=(lo+hi)*.5f;if(reduction(inputDb-mid-p.threshold,effective,m.knee)>mid)lo=mid;else hi=mid;}
+ for(int i=0;i<20;++i){float mid=(lo+hi)*.5f;if(target(inputDb-mid-p.threshold)>mid)lo=mid;else hi=mid;}
  return (lo+hi)*.5f;
 }
 
@@ -141,18 +159,19 @@ class Slot{
  float splitL[3]{},splitR[3]{},splitDL[3]{},splitDR[3]{};
  Spectral spectral; SampleDelay signalDelay,dryDelay;
  float inPower=0,outPower=0,autoDb=0;
- int lastModel=-1;bool wasEnabled=false;
+ int lastModel=-1;bool wasEnabled=false,lastAnalog=false;
+ CharacterDC dcL,dcR;float dcPole=.999f;
  float cachedAttack=-1,cachedRelease=-1,cachedRate=-1,cachedA=0,cachedR=0,cachedSlow=0,cachedRms=0;
  static float coefficient(float ms,float sr){return std::exp(-1000.f/(std::max(.05f,ms)*sr));}
 public:
- void prepare(float rate){sr=std::max(1.f,rate);signalDelay.prepare(int(sr*.01f)+Spectral::N+8);dryDelay.prepare(int(sr*.01f)+Spectral::N+8);spectral.prepare();reset();}
- void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;}
+ void prepare(float rate){sr=std::max(1.f,rate);dcPole=std::exp(-6.283185307f*5.f/sr);signalDelay.prepare(int(sr*.01f)+Spectral::N+8);dryDelay.prepare(int(sr*.01f)+Spectral::N+8);spectral.prepare();reset();}
+ void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;lastAnalog=false;dcL.reset();dcR.reset();}
  float gr()const{return applied;}
  float detectorLevel()const{return lastDetector;}
  float displayReduction(int model,int group)const{if(!wasEnabled)return 0;const auto& m=models[size_t(std::clamp(model,0,modelCount-1))];if(m.architecture==9)return spectral.groupReduction(group);int n=m.architecture==5?2:m.architecture==7?3:m.architecture==8?4:0;if(group<0||group>=n)return 0;return m.architecture==5?std::max(bandEnv[group],m.memory*bandSlow[group]):bandEnv[group];}
  void core(float& l,float& r,const Parameters& p,float scL,float scR,bool external){
   if(!p.enabled){applied=lastDetector=0;return;}
-  const auto& m=models[static_cast<size_t>(std::clamp(p.model,0,modelCount-1))];
+  const auto m=characterModel(p);
   const float dl=external?scL:l,dr=external?scR:r;
   if(m.architecture==9){spectral.process(l,r,dl,dr,sr,m,p,external);applied=spectral.reductionDb();lastDetector=spectral.detector();return;}
   if(m.architecture==7||m.architecture==8){
@@ -195,7 +214,7 @@ public:
   power=rmsC*power+(1-rmsC)*detector*detector;
   float level=(1.f-m.rms)*detector+m.rms*std::sqrt(std::max(0.f,power));
   if(m.architecture==2){const float rms=std::sqrt(std::max(0.f,power));level*=1.f+.35f*std::clamp(detector/std::max(.001f,rms)-1.f,0.f,3.f);}
-  const float ratio=std::clamp(p.ratio,1.f,20.f);
+  const float ratio=characterRatio(db(level)-p.threshold,p);
   const float effective=m.feedback?1.f+std::min(100.f,ratio-1.f)*2.f:ratio;
   const float target=reduction(db(level)-p.threshold,effective,m.knee);
   if(cachedAttack!=p.attack*m.attackScale||cachedRelease!=p.release*m.releaseScale||cachedRate!=sr){cachedAttack=p.attack*m.attackScale;cachedRelease=p.release*m.releaseScale;cachedRate=sr;cachedA=coefficient(cachedAttack,sr);cachedR=coefficient(cachedRelease,sr);cachedSlow=coefficient(cachedRelease*5,sr);}
@@ -205,12 +224,19 @@ public:
   applied=std::max(env,m.memory*slow);if(m.architecture==6){float duty=gain(-applied);applied=-db(std::clamp(duty,.01f,1.f));}previous=applied;
   const float g=gain(p.makeup-applied),mix=std::clamp(p.mix,0.f,1.f),drive=m.drive*std::clamp(p.color,0.f,1.f);
   auto shape=[&](float x){if(drive<=0.f)return x;const float d=1.f+drive*4.f;return std::tanh(d*x)/d;};
-  l+=(shape(l*g)-l)*mix;r+=(shape(r*g)-r)*mix;
+  if(p.analog&&analogCircuit(characterProfile(p.model).circuit)){
+   const auto& profile=characterProfile(p.model);
+   // Remove only the nonlinear residual's DC; preserve the linear path exactly.
+   float a=l*g,b=r*g;
+   float residualL=characterShape(a,profile,p.character,p.color)-a,residualR=characterShape(b,profile,p.character,p.color)-b;
+   float wa=a+dcL.process(residualL,dcPole),wb=b+dcR.process(residualR,dcPole);
+   l+=(wa-l)*mix;r+=(wb-r)*mix;
+  }else{l+=(shape(l*g)-l)*mix;r+=(shape(r*g)-r)*mix;}
  }
  void process(float& l,float& r,const Parameters& p,float scL=0,float scR=0,bool external=false,int lookahead=0,bool spectralPad=false){
   const auto& m=models[size_t(std::clamp(p.model,0,modelCount-1))];
   if(!p.enabled&&!wasEnabled&&lookahead==0&&!spectralPad){applied=lastDetector=0;return;}
-  if(p.model!=lastModel||p.enabled!=wasEnabled){reset();lastModel=p.model;wasEnabled=p.enabled;}
+  if(p.model!=lastModel||p.enabled!=wasEnabled){reset();lastModel=p.model;wasEnabled=p.enabled;lastAnalog=p.analog;}if(lastAnalog!=p.analog){dcL.reset();dcR.reset();lastAnalog=p.analog;}
   if(!lookahead&&!spectralPad&&m.architecture!=9&&!p.stereoMode&&!p.autoGain&&!p.delta){core(l,r,p,scL,scR,external);return;}
   float detectorL=external?scL:l,detectorR=external?scR:r;
   float dryL=l,dryR=r;const bool spectralOn=p.enabled&&m.architecture==9;

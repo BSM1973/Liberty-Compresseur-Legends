@@ -40,6 +40,27 @@ int main(){
  rack.reset();rack.params[0].model=56;for(int n=0;n<48000;++n){l=r=.8f*std::sin(6.283185307f*1500*n/48000);rack.process(l,r);}
  require(rack.displayReduction(0,1)>0&&rack.displayReduction(0,1)>rack.displayReduction(0,15),"real FFT taps");
  rack.params[0].enabled=false;l=r=0;rack.process(l,r);require(rack.displayReduction(0,1)==0,"disabled meter");
+ // New engine: exact disabled mode, harmonic signatures and per-model dynamics.
+ std::set<std::string> characterKeys;
+ for(int m=0;m<modelCount;++m){
+  Parameters p;p.model=m;p.enabled=true;p.analog=false;p.color=.7f;
+  Slot legacy,reference;legacy.prepare(48000);reference.prepare(48000);
+  for(int n=0;n<8192;++n){float a=.65f*std::sin(n*.13f),b=.4f*std::sin(n*.19f),c=a,d=b;legacy.process(a,b,p);p.character=0;reference.process(c,d,p);p.character=1;require(a==c&&b==d,"legacy ignores character");}
+  p.analog=true;p.character=.65f;p.color=.7f;auto md=characterModel(p);auto cp=characterProfile(m);std::ostringstream fingerprint;fingerprint<<md.attackScale<<':'<<md.releaseScale<<':'<<md.knee<<':'<<cp.drive<<':'<<cp.even<<':'<<int(cp.circuit);require(characterKeys.insert(fingerprint.str()).second,"unique character profile");
+  Slot fresh;fresh.prepare(48000);for(int n=0;n<16384;++n){float a=.7f*std::sin(n*.13f),b=.4f*std::sin(n*.19f);fresh.process(a,b,p);require(std::isfinite(a)&&std::isfinite(b),"analog finite");}
+ }
+ // Measure Fourier amplitudes of the real processed tone (1 kHz / 48 kHz).
+ auto harmonic=[&](int model){Slot slot;slot.prepare(48000);Parameters p;p.enabled=true;p.model=model;p.analog=true;p.color=1;p.character=1;p.ratio=1;p.threshold=0;
+  double re[4]{},im[4]{};for(int n=0;n<96000;++n){float x=.6f*std::sin(6.283185307179586*n/48.),y=x;slot.process(x,y,p);if(n>=48000)for(int h=1;h<=3;++h){double a=6.283185307179586*n*h/48.;re[h]+=x*std::cos(a);im[h]+=x*std::sin(a);}}
+  double f=std::hypot(re[1],im[1]);require(f>1,"nonzero fundamental");return std::array<double,2>{std::hypot(re[2],im[2])/f,std::hypot(re[3],im[3])/f};
+ };
+ auto fet=harmonic(0),tube=harmonic(4),digital=harmonic(7),diode=harmonic(5);
+ require(fet[1]>.001&&tube[0]>.001&&diode[0]>.001,"harmonic generation");
+ require(tube[0]>fet[0],"tube even signature");require(digital[0]<1e-6&&digital[1]<1e-6,"digital clean");
+ std::cout<<"Measured relative H2/H3: FET "<<fet[0]<<'/'<<fet[1]<<" Vari-Mu "<<tube[0]<<'/'<<tube[1]<<" Diode "<<diode[0]<<'/'<<diode[1]<<" Digital "<<digital[0]<<'/'<<digital[1]<<'\\n';
+ Parameters ap;ap.model=0;ap.analog=true;ap.ratio=4;ap.allButtons=false;float normal=nominalReduction(-3,characterModel(ap),ap);ap.allButtons=true;require(nominalReduction(-3,characterModel(ap),ap)>normal,"all buttons transfer");
+ ap.model=4;ap.allButtons=false;require(characterRatio(24,ap)>characterRatio(0,ap),"variable mu ratio");
+ require(characterKeys.size()==60,"sixty characters");
  std::set<std::string> fingerprints;int series=0,parallelCount=0;
  for(int i=0;i<factoryCount;++i){auto p=factoryPreset(i);p.parallel?++parallelCount:++series;std::ostringstream key;key<<p.parallel<<':'<<p.balance;
   require(p.slots[0].enabled,"preset A active");require(!p.parallel||p.slots[4].enabled,"preset B active");

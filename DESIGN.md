@@ -12,3 +12,5 @@ v0.3.0 : 5 pages bibliothèque, 200 presets, page analyse, sidechain par slot, M
 v0.4.0 : bibliothèque 8 pages, presets 400, traitements avancés dans une page dédiée. XL inchangé.
 
 v0.4.1 : native brushed metal, screws, vent patterns, metallic dials, analog backlit GR and actual spectral/band displays. Rack 4x2, XL ratio retained. No scrollbars. Master output and global bypass wired; no dummy controls.
+
+v0.5.0: individualized metal finish, trim and cap styles by model ID; dedicated Analog page reachable from rack or detail. Retain rack dimensions and all existing pages. Compatibility / Analog switch. FET All Buttons appears only on FET models. No image assets.
