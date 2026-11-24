@@ -111,6 +111,7 @@ public:
  void prepare(){for(int i=0;i<N;++i)window[i]=std::sin(3.141592654f*(i+.5f)/N);reset();}
  void reset(){inL.fill(0);inR.fill(0);detL.fill(0);detR.fill(0);outL.fill(0);outR.fill(0);env.fill(0);pos=hop=0;gr=det=0;}
  float reductionDb()const{return gr;}float detector()const{return det;}
+ float groupReduction(int group)const{if(group<0||group>=16)return 0;float result=0;for(int k=group*8;k<std::min(N/2+1,(group+1)*8+(group==15?1:0));++k)result=std::max(result,env[size_t(k)]);return result;}
  void process(float& l,float& r,float dl,float dr,float sr,const Model& m,const Parameters& p,bool separate){
   const float ol=outL[pos],orr=outR[pos];outL[pos]=outR[pos]=0;
   inL[pos]=l;inR[pos]=r;detL[pos]=dl;detR[pos]=dr;pos=(pos+1)%N;
@@ -148,6 +149,7 @@ public:
  void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;}
  float gr()const{return applied;}
  float detectorLevel()const{return lastDetector;}
+ float displayReduction(int model,int group)const{if(!wasEnabled)return 0;const auto& m=models[size_t(std::clamp(model,0,modelCount-1))];if(m.architecture==9)return spectral.groupReduction(group);int n=m.architecture==5?2:m.architecture==7?3:m.architecture==8?4:0;if(group<0||group>=n)return 0;return m.architecture==5?std::max(bandEnv[group],m.memory*bandSlow[group]):bandEnv[group];}
  void core(float& l,float& r,const Parameters& p,float scL,float scR,bool external){
   if(!p.enabled){applied=lastDetector=0;return;}
   const auto& m=models[static_cast<size_t>(std::clamp(p.model,0,modelCount-1))];
@@ -242,6 +244,7 @@ public:
  int latency()const{return 8*(lookahead+(spectralPad?Spectral::N:0));}
  float gr(size_t i)const{return slots.at(i).gr();}
  float detectorLevel(size_t i)const{return slots.at(i).detectorLevel();}
+ float displayReduction(size_t i,int group)const{return slots.at(i).displayReduction(params.at(i).model,group);}
  void process(float& l,float& r,float scL=0.f,float scR=0.f,bool hasExternal=false){
   if(!parallel){for(size_t i=0;i<8;++i)slots[i].process(l,r,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);return;}
   float aL=l,aR=r,bL=l,bR=r;

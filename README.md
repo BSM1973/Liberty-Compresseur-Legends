@@ -21,3 +21,6 @@ Version 0.1.3 : fenêtre redimensionnable au ratio 1600:930, cible 1440x837 limi
 
 ## v0.4.0 (experimental)
 60 original profiles, 400 preset configurations, 200 series / 200 parallel. Three/four-band fixed crossovers with linked per-band gain; 256-point FFT spectral compressor with independent linked bin envelopes; PWM-inspired duty curve (not physical PWM); Mid/Side selection, RMS-based Auto Gain, Delta; rack oversampling via JUCE up to 16x, lookahead 0-5 ms per slot, matched serial/parallel latency. Change quality, routing/latency modes while stopped. Spectral latency uses uniform slot padding, plus OS filter latency; not a low-latency live mode. CPU caching for ordinary envelopes, performance not yet benchmarked. Presets are programmed configurations, not auditioned factory sound design. Host validation and commercial QC pending.
+
+## v0.4.1 Studio Hardware
+Native JUCE rack inspired by approved hardware concept, 60 model-specific faceplates across family finishes, all 56 slot knobs directly accessible, MIDI Learn retained, 2/3/4-band and 16 grouped FFT gain-reduction taps, new automatable master output and latency-aligned global bypass with 20 ms smoothing. Factory presets reset new controls to neutral; previous model DSP and 400 preset configurations unchanged. No generated artwork used as interface. Visual and host latency verification pending.

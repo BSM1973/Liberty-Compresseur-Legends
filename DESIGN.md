@@ -10,3 +10,5 @@ v0.2.0 : bibliothèque 3 pages, navigateur 10 lignes/page, recherche, catégorie
 v0.3.0 : 5 pages bibliothèque, 200 presets, page analyse, sidechain par slot, MIDI Learn clic droit, favoris persistants. Géométrie XL conservée.
 
 v0.4.0 : bibliothèque 8 pages, presets 400, traitements avancés dans une page dédiée. XL inchangé.
+
+v0.4.1 : native brushed metal, screws, vent patterns, metallic dials, analog backlit GR and actual spectral/band displays. Rack 4x2, XL ratio retained. No scrollbars. Master output and global bypass wired; no dummy controls.

@@ -7,8 +7,9 @@ public:
  using APVTS=juce::AudioProcessorValueTreeState;
  APVTS state;
  std::array<std::atomic<float>,8> meters{},detectors{};
+ std::array<std::array<std::atomic<float>,16>,8> displayMeters{};
  std::atomic<bool> sidechainAvailable{false};
- static constexpr int midiTargets=57;
+ static constexpr int midiTargets=58;
  std::array<std::atomic<int>,midiTargets> midiCC{};
  std::atomic<int> learnTarget{-1};
  std::array<juce::RangedAudioParameter*,midiTargets> midiParams{};
@@ -16,7 +17,7 @@ public:
 private:
  std::array<liberty::Rack,5> racks;
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;
- juce::AudioBuffer<float> scratch;int maxBlock=0,lastQuality=-1;double sampleRate=48000;
+ juce::AudioBuffer<float> scratch,dryScratch;liberty::SampleDelay masterDry;juce::SmoothedValue<float> masterGain,masterWet;std::atomic<float>* outputGain=nullptr;std::atomic<float>* masterBypass=nullptr;int masterDelay=-1;int maxBlock=0,lastQuality=-1;double sampleRate=48000;
  std::atomic<float>* quality=nullptr;std::atomic<float>* lookahead=nullptr;
  std::array<std::array<std::atomic<float>*,3>,8> advancedValues{};
  static APVTS::ParameterLayout layout(){
@@ -39,6 +40,8 @@ private:
   out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"balance",1},"Balance A/B",juce::NormalisableRange<float>(0,1,.01f),.5f));
   out.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"quality",1},"Oversampling",juce::StringArray{"1x","2x","4x","8x","16x"},0));
   out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"lookahead",1},"Lookahead (ms)",juce::NormalisableRange<float>(0,5,.5f),0));
+  out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"masterGain",1},"Master output (dB)",juce::NormalisableRange<float>(-24,24,.1f),0));
+  out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"masterBypass",1},"Master bypass",false));
   return out;
  }
  std::array<std::array<std::atomic<float>*,9>,8> values{};
@@ -51,7 +54,7 @@ public:
   parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
   for(auto& cc:midiCC)cc.store(-1);
   const char* learnKeys[]={"threshold","ratio","attack","release","makeup","mix","color"};
-  for(int i=0;i<8;++i){externalValues[i]=state.getRawParameterValue(id(i,"external"));detectors[i].store(0);for(int k=0;k<7;++k)midiParams[i*7+k]=state.getParameter(id(i,learnKeys[k]));}midiParams[56]=state.getParameter("balance");quality=state.getRawParameterValue("quality");lookahead=state.getRawParameterValue("lookahead");for(int i=0;i<8;++i){advancedValues[i][0]=state.getRawParameterValue(id(i,"stereo"));advancedValues[i][1]=state.getRawParameterValue(id(i,"auto"));advancedValues[i][2]=state.getRawParameterValue(id(i,"delta"));}
+  for(int i=0;i<8;++i){externalValues[i]=state.getRawParameterValue(id(i,"external"));detectors[i].store(0);for(int k=0;k<7;++k)midiParams[i*7+k]=state.getParameter(id(i,learnKeys[k]));}midiParams[56]=state.getParameter("balance");midiParams[57]=state.getParameter("masterGain");outputGain=state.getRawParameterValue("masterGain");masterBypass=state.getRawParameterValue("masterBypass");for(auto& slot:displayMeters)for(auto& meter:slot)meter.store(0);quality=state.getRawParameterValue("quality");lookahead=state.getRawParameterValue("lookahead");for(int i=0;i<8;++i){advancedValues[i][0]=state.getRawParameterValue(id(i,"stereo"));advancedValues[i][1]=state.getRawParameterValue(id(i,"auto"));advancedValues[i][2]=state.getRawParameterValue(id(i,"delta"));}
  }
  int midiIndex(juce::RangedAudioParameter* a)const{for(int i=0;i<midiTargets;++i)if(midiParams[i]==a)return i;return -1;}
  void handleMidi(const juce::MidiBuffer& midi){
@@ -66,11 +69,11 @@ public:
   const auto preset=liberty::factoryPreset(index);
   auto put=[&](const juce::String& key,float value){if(auto* a=state.getParameter(key)){a->beginChangeGesture();a->setValueNotifyingHost(a->convertTo0to1(value));a->endChangeGesture();}};
   for(int i=0;i<8;++i){const auto& s=preset.slots[size_t(i)];put(id(i,"on"),s.enabled?1.f:0.f);put(id(i,"model"),float(s.model));put(id(i,"threshold"),s.threshold);put(id(i,"ratio"),s.ratio);put(id(i,"attack"),s.attack);put(id(i,"release"),s.release);put(id(i,"makeup"),s.makeup);put(id(i,"mix"),s.mix);put(id(i,"color"),s.color);put(id(i,"external"),0.f);put(id(i,"stereo"),float(s.stereoMode));put(id(i,"auto"),s.autoGain?1.f:0.f);put(id(i,"delta"),s.delta?1.f:0.f);}
-  put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);
+  put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);put("masterGain",0);put("masterBypass",0);
  }
  const juce::String getName() const override{return "Compresseur Legends";}
- void prepareToPlay(double sr,int block)override{sampleRate=sr;maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
- void releaseResources() override{for(auto& rack:racks)rack.reset();for(auto& m:meters)m.store(0);}
+ void prepareToPlay(double sr,int block)override{sampleRate=sr;maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);dryScratch.setSize(2,maxBlock);masterDry.prepare(int(sr*.05)+4096);masterDelay=-1;masterGain.reset(sr,.02);masterWet.reset(sr,.02);masterGain.setCurrentAndTargetValue(liberty::gain(outputGain->load()));masterWet.setCurrentAndTargetValue(masterBypass->load()>.5f?0.f:1.f);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
+ void releaseResources() override{for(auto& rack:racks)rack.reset();for(auto& m:meters)m.store(0);for(auto& slot:displayMeters)for(auto& m:slot)m.store(0);masterDry.reset();}
  bool isBusesLayoutSupported(const BusesLayout& b)const override{const auto main=b.getMainOutputChannelSet();const auto sc=b.getChannelSet(true,1);return b.getMainInputChannelSet()==main&&(main==juce::AudioChannelSet::mono()||main==juce::AudioChannelSet::stereo())&&(sc.isDisabled()||sc==juce::AudioChannelSet::mono()||sc==juce::AudioChannelSet::stereo());}
  void processBlock(juce::AudioBuffer<float>& buffer,juce::MidiBuffer& midi)override{
   juce::ScopedNoDenormals guard;handleMidi(midi);midi.clear();
@@ -85,13 +88,22 @@ public:
   if(main.getNumChannels()==0)return;
   auto* l=main.getWritePointer(0);auto* r=main.getNumChannels()>1?main.getWritePointer(1):nullptr;
   const float* sl=has?side.getReadPointer(0):nullptr;const float* sr=side.getNumChannels()>1?side.getReadPointer(1):sl;
-  if(q==0||!oversamplers[q-1]||maxBlock<=0){for(int i=0;i<main.getNumSamples();++i){float left=l[i],right=r?r[i]:left;float a=sl?sl[i]:0,b=sr?sr[i]:a;rack.process(left,right,a,b,has);l[i]=left;if(r)r[i]=right;}}
-  else for(int offset=0;offset<main.getNumSamples();offset+=maxBlock){int n=std::min(maxBlock,main.getNumSamples()-offset);for(int j=0;j<n;++j){int i=offset+j;scratch.setSample(0,j,l[i]);scratch.setSample(1,j,r?r[i]:l[i]);scratch.setSample(2,j,sl?sl[i]:0);scratch.setSample(3,j,sr?sr[i]:0);}
-   juce::dsp::AudioBlock<float> block(scratch);auto sub=block.getSubBlock(0,size_t(n));auto up=oversamplers[q-1]->processSamplesUp(sub);auto* ul=up.getChannelPointer(0);auto* ur=up.getChannelPointer(1);auto* usl=up.getChannelPointer(2);auto* usr=up.getChannelPointer(3);
-   for(size_t j=0;j<up.getNumSamples();++j)rack.process(ul[j],ur[j],usl[j],usr[j],has);
-   oversamplers[q-1]->processSamplesDown(sub);for(int j=0;j<n;++j){l[offset+j]=scratch.getSample(0,j);if(r)r[offset+j]=scratch.getSample(1,j);}
+  if(maxBlock<=0)return;
+  if(masterDelay!=latency){masterDry.reset();masterDelay=latency;}
+  masterGain.setTargetValue(liberty::gain(outputGain->load()));masterWet.setTargetValue(masterBypass->load()>.5f?0.f:1.f);
+  for(int offset=0;offset<main.getNumSamples();offset+=maxBlock){
+   int n=std::min(maxBlock,main.getNumSamples()-offset);
+   for(int j=0;j<n;++j){int i=offset+j;float dl=l[i],dr=r?r[i]:dl;masterDry.process(dl,dr,latency);dryScratch.setSample(0,j,dl);dryScratch.setSample(1,j,dr);}
+   if(q==0||!oversamplers[q-1]){for(int j=0;j<n;++j){int i=offset+j;float left=l[i],right=r?r[i]:left;float a=sl?sl[i]:0,b=sr?sr[i]:a;rack.process(left,right,a,b,has);l[i]=left;if(r)r[i]=right;}}
+   else{
+    for(int j=0;j<n;++j){int i=offset+j;scratch.setSample(0,j,l[i]);scratch.setSample(1,j,r?r[i]:l[i]);scratch.setSample(2,j,sl?sl[i]:0);scratch.setSample(3,j,sr?sr[i]:0);}
+    juce::dsp::AudioBlock<float> block(scratch);auto sub=block.getSubBlock(0,size_t(n));auto up=oversamplers[q-1]->processSamplesUp(sub);auto* ul=up.getChannelPointer(0);auto* ur=up.getChannelPointer(1);auto* usl=up.getChannelPointer(2);auto* usr=up.getChannelPointer(3);
+    for(size_t j=0;j<up.getNumSamples();++j)rack.process(ul[j],ur[j],usl[j],usr[j],has);
+    oversamplers[q-1]->processSamplesDown(sub);for(int j=0;j<n;++j){l[offset+j]=scratch.getSample(0,j);if(r)r[offset+j]=scratch.getSample(1,j);}
+   }
+   for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}}
   }
-  for(int i=0;i<8;++i){meters[i].store(rack.gr(i),std::memory_order_relaxed);detectors[i].store(rack.detectorLevel(i),std::memory_order_relaxed);}
+  for(int i=0;i<8;++i){meters[i].store(rack.gr(i),std::memory_order_relaxed);detectors[i].store(rack.detectorLevel(i),std::memory_order_relaxed);for(int group=0;group<16;++group)displayMeters[i][group].store(rack.displayReduction(size_t(i),group),std::memory_order_relaxed);}
  }
  bool hasEditor()const override{return true;}
  juce::AudioProcessorEditor* createEditor()override;

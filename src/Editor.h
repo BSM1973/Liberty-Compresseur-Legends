@@ -60,20 +60,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  }
  void knobDraw(juce::Graphics& g,float x,float y,float radius,float value,const juce::String& title,const juce::String& display,bool darkBackground,juce::RangedAudioParameter* a=nullptr){
   using namespace clskin;
-    const R shadow{x-radius+2.f,y-radius+3.f,radius*2,radius*2};
-    g.setColour(midnight.withAlpha(.7f));g.fillEllipse(shadow);
-    g.setGradientFill(juce::ColourGradient(goldLight,{x-radius,y-radius},goldDark,{x+radius,y+radius},false));
-    g.fillEllipse(x-radius,y-radius,2*radius,2*radius);
-    g.setColour(ink);g.drawEllipse(x-radius+3.f,y-radius+3.f,2*radius-6,2*radius-6,2.f);
-    g.setGradientFill(juce::ColourGradient(cream,{x-radius*.65f,y-radius*.8f},gold,{x+radius*.6f,y+radius*.8f},false));
-    g.fillEllipse(x-radius*.7f,y-radius*.7f,radius*1.4f,radius*1.4f);
-    const float angle=(.75f+std::clamp(value,0.f,1.f)*1.5f)*pi;
-    line(g,x,y,x+std::cos(angle)*radius*.62f,y+std::sin(angle)*radius*.62f,ink,2.7f);
-    for(int k=0;k<=10;++k) {
-        const float a=(.75f+1.5f*float(k)/10.f)*pi;
-        const auto dx=std::cos(a),dy=std::sin(a);
-        line(g,x+dx*(radius+2.f),y+dy*(radius+2.f),x+dx*(radius+6.f),y+dy*(radius+6.f),goldDark,1.f);
-    }
+    machined(g,x,y,radius,value);
     // Compact MASTER knobs use non-overlapping caption rectangles.
     const float captionHalfWidth=radius<=20.f?53.f:radius+45.f;
     drawLabel(g,title,R{x-captionHalfWidth,y+radius+13.f,2.f*captionHalfWidth,19.f},13.f,darkBackground?cream:ink,false,
@@ -88,26 +75,96 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   if(a)hits.push_back({R{x-radius-7,y-radius-7,2*(radius+7),2*(radius+7)},{},a});
  }
  void knob(juce::Graphics& g,int slot,const char* key,float x,float y,float radius,const juce::String& title,const juce::String& suffix){
-  auto* a=param(slot,key);knobDraw(g,x,y,radius,a->getValue(),title,juce::String(raw(slot,key),1)+suffix,true,a);
+  auto* a=param(slot,key);knobDraw(g,x,y,radius,a->getValue(),title,valueText(slot,key),true,a);
  }
- void meter(juce::Graphics& g,R r,float gr){
-  using namespace clskin;surface(g,r,paper,paper.darker(.22f),7.f,goldDark);
-  const float x=r.getCentreX(),y=r.getBottom()-13,rad=std::min(r.getWidth()*.42f,r.getHeight()*.76f);
-  for(int i=0;i<=12;++i){float angle=(-155.f+130.f*i/12)*pi/180;float c=std::cos(angle),s=std::sin(angle);line(g,x+c*(rad-8),y+s*(rad-8),x+c*rad,y+s*rad,ink,1.2f);}
-  float a=(-155.f+130.f*(1.f-juce::jlimit(0.f,30.f,gr)/30.f))*pi/180;
-  line(g,x,y,x+std::cos(a)*(rad-3),y+std::sin(a)*(rad-3),gold,2.f);
-  g.setColour(ink);g.fillEllipse(x-4,y-4,8,8);drawLabel(g,"GR",R{x-22,r.getY()+4,44,16},12,ink,false,juce::Justification::centred,true);
+ struct Finish{juce::Colour top,bottom,text;bool darkMeter=false;int detail=0;};
+ Finish finish(int m){
+  using C=juce::Colour;const juce::String fam=family(m);
+  if(fam=="OPTO")return {C(0xffc8c9c6),C(0xff757c80),C(0xff16191c),false,1};
+  if(fam=="VCA")return {C(0xff7d8289),C(0xff30343a),C(0xfffafafa),false,2};
+  if(fam=="VARI-MU")return {C(0xff76272c),C(0xff321519),C(0xffffece2),false,3};
+  if(fam=="DIODE")return {C(0xff8d7854),C(0xff39352c),C(0xfff9e7c9),false,1};
+  if(fam=="PWM-INSPIRED")return {C(0xff555960),C(0xff15191e),C(0xfff0f0f0),true,4};
+  if(fam=="MULTIBAND"||fam=="DUAL BAND")return {C(0xffbabdc3),C(0xff666b75),C(0xff111318),false,2};
+  if(fam=="SPECTRAL"||fam=="DIGITAL")return {C(0xff474b55),C(0xff15181d),C(0xffeceff2),true,4};
+  return {C(0xff45474a),C(0xff1c1d20),C(0xfff4f0e8),false,0};
+ }
+ void screw(juce::Graphics& g,float x,float y,float radius=5){
+  using namespace clskin;g.setColour(midnight);g.fillEllipse(x-radius-1,y-radius-1,2*radius+2,2*radius+2);
+  g.setGradientFill(juce::ColourGradient(goldLight,{x-radius,y-radius},goldDark,{x+radius,y+radius},false));g.fillEllipse(x-radius,y-radius,2*radius,2*radius);
+  line(g,x-radius*.55f,y+radius*.45f,x+radius*.55f,y-radius*.45f,ink,1.5f);
+ }
+ void brushed(juce::Graphics& g,R r,juce::Colour top,juce::Colour bottom,juce::Colour edge){
+  using namespace clskin;surface(g,r,top,bottom,8,edge);
+  // Deterministic fine metal grain, native vector paint; no image or animation noise.
+  juce::Graphics::ScopedSaveState save(g);g.reduceClipRegion(r.reduced(5).toNearestInt());
+  for(int i=0;i<int(r.getHeight()-10);++i){unsigned k=unsigned(i)*1664525u+1013904223u;float y=r.getY()+5+i;float alpha=.018f+float((k>>24)&31)/650.f;line(g,r.getX()+6,y,r.getRight()-6,y,(i%3?juce::Colours::white:juce::Colours::black).withAlpha(alpha),.65f);}
+ }
+ void led(juce::Graphics& g,float x,float y,bool active){
+  using namespace clskin;g.setColour(ink);g.fillEllipse(x-7,y-7,14,14);auto c=active?amber:juce::Colour(0xff48504e);
+  if(active){g.setColour(c.withAlpha(.18f));g.fillEllipse(x-10,y-10,20,20);}g.setGradientFill(juce::ColourGradient(c.brighter(.5f),{x-3,y-3},c.darker(.5f),{x+4,y+4},true));g.fillEllipse(x-5,y-5,10,10);
+ }
+ void machined(juce::Graphics& g,float x,float y,float rad,float value){
+  using namespace clskin;g.setColour(juce::Colours::black.withAlpha(.8f));g.fillEllipse(x-rad-2,y-rad+3,2*rad+4,2*rad+3);
+  g.setGradientFill(juce::ColourGradient(juce::Colour(0xffe5e7e7),{x-rad,y-rad},juce::Colour(0xff30343a),{x+rad,y+rad},false));g.fillEllipse(x-rad,y-rad,2*rad,2*rad);
+  g.setColour(ink);g.drawEllipse(x-rad+2,y-rad+2,2*rad-4,2*rad-4,1.3f);
+  float rr=rad*.82f;g.setGradientFill(juce::ColourGradient(juce::Colour(0xffe8e8e4),{x-rr,y-rr},juce::Colour(0xff666b70),{x+rr,y+rr},false));g.fillEllipse(x-rr,y-rr,2*rr,2*rr);
+  for(int i=0;i<24;++i){float a=i*2*pi/24;line(g,x+std::cos(a)*rr*.22f,y+std::sin(a)*rr*.22f,x+std::cos(a)*rr*.93f,y+std::sin(a)*rr*.93f,juce::Colours::white.withAlpha(.055f),.5f);}
+  float a=(.75f+1.5f*std::clamp(value,0.f,1.f))*pi;line(g,x+std::cos(a)*rad*.42f,y+std::sin(a)*rad*.42f,x+std::cos(a)*rad*.86f,y+std::sin(a)*rad*.86f,ink,2.4f);
+  for(int i=0;i<=10;++i){float t=(.75f+1.5f*i/10)*pi;line(g,x+std::cos(t)*(rad+2),y+std::sin(t)*(rad+2),x+std::cos(t)*(rad+5),y+std::sin(t)*(rad+5),goldLight.withAlpha(.8f),.9f);}
+ }
+ juce::String valueText(int slot,const char* key){
+  float value=raw(slot,key);juce::String k(key);
+  if(k=="mix"||k=="color")return juce::String(int(std::round(value*100)))+" %";
+  if(k=="ratio")return juce::String(value,1)+":1";
+  if(k=="attack"||k=="release")return juce::String(value,value<10?1:0)+" ms";
+  return juce::String(value,1)+" dB";
+ }
+ void rackKnob(juce::Graphics& g,int slot,const char* key,float x,float y,const juce::String& label,juce::Colour text){
+  auto* a=param(slot,key);machined(g,x,y,17,a->getValue());
+  drawLabel(g,label,R{x-42,y+22,84,15},12.8f,text,false,juce::Justification::centred,true);
+  drawLabel(g,valueText(slot,key),R{x-42,y+38,84,15},12.5f,text,false,juce::Justification::centred);
+  hits.push_back({R{x-23,y-23,46,46},{},a});
+ }
+ void meter(juce::Graphics& g,R r,float gr,bool dark=false,bool compact=false){
+  using namespace clskin;surface(g,r,juce::Colour(0xff343436),juce::Colour(0xff101113),6,juce::Colour(0xff777b7d));
+  auto face=r.reduced(6);auto tint=dark?juce::Colour(0xff33191d):juce::Colour(0xfff6d9a2);auto fg=dark?juce::Colour(0xffff655d):juce::Colour(0xff302719);
+  g.setGradientFill(juce::ColourGradient(tint.brighter(.16f),face.getCentre(),tint.darker(.35f),face.getBottomRight(),true));g.fillRoundedRectangle(face,3);
+  float x=face.getCentreX(),y=face.getBottom()-5,rad=std::min(face.getWidth()*.48f,face.getHeight()*.92f);
+  const float marks[]={30,20,10,7,5,3,1,0};
+  auto angle=[](float db){return (-155.f+130.f*(1.f-std::clamp(db,0.f,30.f)/30.f))*clskin::pi/180.f;};
+  for(float mark:marks){float a=angle(mark),dx=std::cos(a),dy=std::sin(a);line(g,x+dx*(rad-7),y+dy*(rad-7),x+dx*rad,y+dy*rad,fg,1.2f);
+   if(!compact&&(mark==30||mark==20||mark==10||mark==5||mark==0))drawLabel(g,juce::String(int(mark)),R{x+dx*(rad+6)-10,y+dy*(rad+6)-7,20,12},9.5f,fg,false,juce::Justification::centred);}
+  float a=angle(gr);line(g,x,y,x+std::cos(a)*(rad-2),y+std::sin(a)*(rad-2),dark?juce::Colour(0xffff6d63):juce::Colour(0xff8c1f24),1.7f);g.setColour(fg);g.fillEllipse(x-3,y-3,6,6);
+  if(!compact)drawLabel(g,"GR (dB)",R{x-39,face.getY()+4,78,12},10,fg,false,juce::Justification::centred,true);
+  g.setColour(juce::Colours::white.withAlpha(.12f));g.fillRoundedRectangle(face.withHeight(face.getHeight()*.20f),2);
+ }
+ void display(juce::Graphics& g,R r,int slot,int m){
+  using namespace clskin;const auto& md=liberty::models[size_t(m)];auto skin=finish(m);
+  if(md.architecture==9){
+   surface(g,r,juce::Colour(0xff414449),juce::Colour(0xff0b1011),5,goldDark);auto plot=r.reduced(8);plot.removeFromTop(14);
+   drawLabel(g,"FFT / GR (dB)",R{r.getX()+6,r.getY()+3,r.getWidth()-12,13},10,amber,false,juce::Justification::centred,true);
+   for(int j=0;j<=3;++j){float y=plot.getY()+plot.getHeight()*j/3;line(g,plot.getX(),y,plot.getRight(),y,amber.withAlpha(.15f));}
+   for(int k=0;k<16;++k){float val=slot>=0&&on(slot)?p.displayMeters[slot][k].load():0;float h=plot.getHeight()*std::clamp(val/30.f,0.f,1.f),w=plot.getWidth()/16;g.setColour(amber.withAlpha(.9f));g.fillRect(R{plot.getX()+k*w+1,plot.getBottom()-h,w-2,h});}
+  }else if(md.architecture==5||md.architecture==7||md.architecture==8){
+   int n=md.architecture==5?2:md.architecture==7?3:4;float w=r.getWidth()/n;for(int k=0;k<n;++k){float gr=slot>=0&&on(slot)?p.displayMeters[slot][k].load():0;meter(g,R{r.getX()+k*w+2,r.getY(),w-4,r.getHeight()-15},gr,false,true);drawLabel(g,"B"+juce::String(k+1),R{r.getX()+k*w,r.getBottom()-14,w,13},11,skin.text,false,juce::Justification::centred,true);}
+  }else meter(g,r,slot>=0&&on(slot)?p.meters[slot].load():0,skin.darkMeter);
+ }
+ void vents(juce::Graphics& g,R r,int kind,bool active){
+  using namespace clskin;
+  if(kind==3){surface(g,r,juce::Colour(0xff392c26),ink,4,goldDark);for(int i=0;i<5;++i){float x=r.getX()+4+i*(r.getWidth()-8)/5;g.setColour((active?juce::Colour(0xffe5a04d):juce::Colour(0xff59402c)).withAlpha(.6f));g.fillRoundedRectangle(R{x,r.getY()+5,2.5f,r.getHeight()-10},1);}}
+  else if(kind==4){for(int j=0;j<5;++j)for(int i=0;i<3;++i){float x=r.getX()+3+i*8+(j%2?2:0),y=r.getY()+3+j*8;g.setColour(ink);g.fillEllipse(x,y,5,5);}}
+  else for(int i=0;i<4;++i){float y=r.getY()+5+i*9;g.setColour(ink);g.fillRoundedRectangle(R{r.getX(),y,r.getWidth(),4},2);line(g,r.getX()+2,y+4,r.getRight()-2,y+4,goldLight.withAlpha(.4f));}
  }
  void enclosure(juce::Graphics& g,R r,int slot,int m,bool mini){
-  using namespace clskin;auto c=color(m);surface(g,r,c.brighter(.15f),c.darker(.3f),12.f,goldDark);
-  for(float y=r.getY()+12;y<r.getBottom()-10;y+=4)line(g,r.getX()+7,y,r.getRight()-7,y,cream.withAlpha(.025f));
-  for(float x:{r.getX()+13,r.getRight()-13})for(float y:{r.getY()+12,r.getBottom()-12}){g.setColour(goldLight);g.fillEllipse(x-3,y-3,6,6);line(g,x-2,y+1,x+2,y-1,ink,1);}
-  drawLabel(g,liberty::models[m].name,R{r.getX()+18,r.getY()+8,r.getWidth()-36,32},mini?23:31,cream,true,juce::Justification::centred,true);
-  drawLabel(g,family(m),R{r.getX()+18,r.getY()+40,r.getWidth()-36,18},13,cream,false,juce::Justification::centred,true);
-  float mx=r.getCentreX();meter(g,R{mx-63,r.getY()+64,126,72},slot>=0?p.meters[slot].load():0.f);
-  if(slot>=0){drawLabel(g,juce::String(p.meters[slot].load(),1)+" dB",R{mx-67,r.getY()+141,134,24},16,cream,false,juce::Justification::centred,true);
-   g.setColour(on(slot)?amber:muted.darker());g.fillEllipse(r.getX()+18,r.getBottom()-25,9,9);
-   drawLabel(g,on(slot)?tr("ACTIF","ACTIVE"):"BYPASS",R{r.getX()+32,r.getBottom()-30,85,20},12,cream,false,juce::Justification::centredLeft,true);}
+  using namespace clskin;auto skin=finish(m);brushed(g,r,skin.top,skin.bottom,goldDark);
+  for(float x:{r.getX()+10,r.getRight()-10})for(float y:{r.getY()+10,r.getBottom()-10})screw(g,x,y);
+  drawLabel(g,family(m),R{r.getX()+18,r.getY()+8,r.getWidth()-36,24},mini?17:22,skin.text,false,juce::Justification::centred,true);
+  surface(g,R{r.getX()+32,r.getY()+35,r.getWidth()-64,34},juce::Colour(0xff802c37),juce::Colour(0xff3d141a),4,goldDark);
+  drawLabel(g,liberty::models[m].name,R{r.getX()+36,r.getY()+36,r.getWidth()-72,31},mini?21:28,cream,true,juce::Justification::centred,true);
+  display(g,R{r.getX()+22,r.getY()+79,r.getWidth()-44,r.getHeight()-117},slot,m);
+  if(slot>=0){led(g,r.getX()+24,r.getBottom()-19,on(slot));drawLabel(g,juce::String(p.meters[slot].load(),1)+" dB GR",R{r.getX()+43,r.getBottom()-30,r.getWidth()-86,23},15,skin.text,false,juce::Justification::centred,true);}
+  else drawLabel(g,"LIBERTY STUDIO / "+juce::String(m+1).paddedLeft('0',2),R{r.getX()+25,r.getBottom()-29,r.getWidth()-50,23},12,skin.text,false,juce::Justification::centred,true);
  }
  void backplate(juce::Graphics& g){
   using namespace clskin;
@@ -117,7 +174,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"TITANIUM RED  /  v0.4.0",R{108,86,500,20},15,muted);
+  drawLabel(g,"STUDIO HARDWARE  /  v0.4.1",R{108,86,500,20},15,muted);
   button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
@@ -128,33 +185,51 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   line(g,20,118,1580,118,goldDark,1.5f);
  }
  void board(juce::Graphics& g){
-  using namespace clskin;surface(g,R{28,139,1544,641},navySoft,midnight,18.f,goldDark);
-  drawLabel(g,tr("COLLECTION LIBERTY","LIBERTY COLLECTION"),R{65,146,310,27},19,cream,false,juce::Justification::centredLeft,true);
-  drawLabel(g,tr("60 PROFILS EXPÉRIMENTAUX","60 EXPERIMENTAL PROFILES"),R{390,146,440,27},17,muted);
-  bool par=p.state.getRawParameterValue("parallel")->load()>.5f;
-  drawLabel(g,par?"IN > SPLIT A/B > MIX > OUT":"IN > 1 > 2 > 3 > 4 > 5 > 6 > 7 > 8 > OUT",R{860,146,675,27},16,cream,false,juce::Justification::centredRight,true);
-  std::array<R,8> boxes;for(int i=0;i<8;++i)boxes[i]=R{56.f+(i%4)*381.f,177.f+(i/4)*294.f,355.f,281.f};
-  for(int i=0;i<7;++i)if(i!=3){auto a=boxes[i],b=boxes[i+1];line(g,a.getRight()-12,a.getCentreY(),b.getX()+12,b.getCentreY(),gold,5.f);}
-  if(!par){juce::Path cable;cable.startNewSubPath(1560,340);cable.lineTo(1560,466);cable.lineTo(42,466);cable.lineTo(42,610);cable.lineTo(72,610);g.setColour(gold);g.strokePath(cable,juce::PathStrokeType(5.f));}
+  using namespace clskin;bool par=p.state.getRawParameterValue("parallel")->load()>.5f;
+  surface(g,R{12,126,1576,655},navy,midnight,10,goldDark);
   for(int i=0;i<8;++i){
-   auto b=boxes[i];surface(g,b,navy,midnight,10.f,selected==i?gold:goldDark);
-   drawLabel(g,juce::String(i+1).paddedLeft('0',2),R{b.getX()+13,b.getY()+7,45,27},23,cream,true);
-   drawLabel(g,family(model(i)),R{b.getX()+61,b.getY()+9,100,23},14,muted,false,juce::Justification::centredLeft,true);
-   button(g,R{b.getRight()-180,b.getY()+8,102,25},tr("HISTOIRE","HISTORY"),[this,i]{selected=i;historyPage=0;screen=Screen::History;},false,false,13);
-   button(g,R{b.getRight()-72,b.getY()+8,62,25},on(i)?"ON":"OFF",[this,i]{setRaw(i,"on",on(i)?0.f:1.f);},false,on(i),13);
-   R unit{b.getX()+37,b.getY()+39,b.getWidth()-74,202};enclosure(g,unit,i,model(i),true);hit(unit,[this,i]{selected=i;screen=Screen::Detail;});
-   button(g,R{b.getX()+15,b.getBottom()-34,123,26},tr("ÉDITER","EDIT"),[this,i]{selected=i;screen=Screen::Detail;},false,false,13);
-   button(g,R{b.getX()+144,b.getBottom()-34,118,26},tr("CHOISIR","CHOOSE"),[this,i]{selected=i;libraryPage=0;screen=Screen::Library;},false,false,13);
-   button(g,R{b.getX()+269,b.getBottom()-34,32,26},"<",[this,i]{swapSlots(i,i-1);});
-   button(g,R{b.getX()+307,b.getBottom()-34,32,26},">",[this,i]{swapSlots(i,i+1);});
+   const int m=model(i);auto skin=finish(m);float x=20.f+(i%4)*393.f,y=134.f+(i/4)*321.f;R r{x,y,381,313};
+   brushed(g,r,skin.top,skin.bottom,selected==i?gold:goldDark);
+   for(float sx:{x+9,x+372})for(float sy:{y+9,y+304})screw(g,sx,sy);
+   drawLabel(g,juce::String(i+1).paddedLeft('0',2)+" / "+family(m),R{x+19,y+8,122,25},13.5f,skin.text,false,juce::Justification::centredLeft,true);
+   surface(g,R{x+145,y+7,156,28},juce::Colour(0xff862b39),juce::Colour(0xff391319),4,goldDark);
+   drawLabel(g,liberty::models[m].name,R{x+149,y+8,148,26},17,cream,true,juce::Justification::centred,true);
+   led(g,x+315,y+20,on(i));
+   button(g,R{x+327,y+7,37,26},on(i)?"ON":"OFF",[this,i]{setRaw(i,"on",on(i)?0.f:1.f);},false,on(i),11);
+   bool special=liberty::models[size_t(m)].architecture>=7||liberty::models[size_t(m)].architecture==5;
+   if(!special){vents(g,R{x+24,y+61,31,43},skin.detail,on(i));vents(g,R{x+326,y+61,31,43},skin.detail,on(i));}
+   display(g,special?R{x+24,y+42,333,88}:R{x+64,y+42,253,88},i,m);
+   const char* keys[]={"threshold","ratio","attack","release","makeup","mix","color"};
+   juce::String names[]={tr("SEUIL","THRESHOLD"),"RATIO",tr("ATTAQUE","ATTACK"),tr("RELÂCHEMENT","RELEASE"),"GAIN",tr("MÉLANGE","MIX"),tr("COULEUR","COLOR")};
+   for(int k=0;k<7;++k){float px=x+48+(k%4)*95.f;float py=y+(k<4?151.f:224.f);rackKnob(g,i,keys[k],px,py,names[k],skin.text);}
+   button(g,R{x+297,y+211,65,25},tr("ÉDITER","EDIT"),[this,i]{selected=i;screen=Screen::Detail;},false,false,11);
+   button(g,R{x+297,y+242,65,25},tr("CHOISIR","LOAD"),[this,i]{selected=i;libraryPage=model(i)/8;screen=Screen::Library;},false,false,11);
+   button(g,R{x+18,y+282,115,24},tr("HISTOIRE","HISTORY"),[this,i]{selected=i;historyPage=0;screen=Screen::History;},false,false,12);
+   button(g,R{x+140,y+282,106,24},tr("ANALYSE","ANALYSIS"),[this,i]{selected=i;screen=Screen::Analysis;},false,false,12);
+   button(g,R{x+258,y+282,46,24},"<",[this,i]{swapSlots(i,i-1);},false,false,15);
+   button(g,R{x+311,y+282,46,24},">",[this,i]{swapSlots(i,i+1);},false,false,15);
   }
-  surface(g,R{23,790,1553,126},sapphire,midnight,8.f,goldDark);
-  drawLabel(g,tr("SIGNAL MASTER","MASTER SIGNAL"),R{42,816,225,52},22,cream,true);
-  button(g,R{288,820,168,48},tr("SÉRIE","SERIES"),[this]{set(p.state.getParameter("parallel"),0);},false,!par);
-  button(g,R{469,820,205,48},tr("PARALLÈLE","PARALLEL"),[this]{set(p.state.getParameter("parallel"),1);},false,par);
-  auto* b=p.state.getParameter("balance");knobDraw(g,760,823,20,b->getValue(),"BALANCE A/B",juce::String(int(b->getValue()*100))+" % B",true,b);
-  drawLabel(g,tr("RÉDUCTION DE GAIN","GAIN REDUCTION"),R{914,808,340,27},17,cream,false,juce::Justification::centredLeft,true);
-  for(int i=0;i<8;++i){R r{915.f+i*78,850,68,18};g.setColour(midnight);g.fillRoundedRectangle(r,3);g.setColour(gold);g.fillRoundedRectangle(r.withWidth(r.getWidth()*juce::jlimit(0.f,1.f,p.meters[i].load()/30.f)),3);drawLabel(g,juce::String(i+1),R{r.getX(),874,68,18},13,muted,false,juce::Justification::centred);}
+  brushed(g,R{12,786,1576,132},juce::Colour(0xff747a80),juce::Colour(0xff32363b),goldDark);
+  screw(g,23,797);screw(g,1577,797);screw(g,23,907);screw(g,1577,907);
+  drawLabel(g,"MASTER",R{35,810,142,38},28,cream,true,juce::Justification::centred,true);
+  drawLabel(g,tr("ROUTAGE GLOBAL","GLOBAL ROUTING"),R{32,850,148,23},13,cream,false,juce::Justification::centred,true);
+  line(g,185,803,185,902,goldDark);
+  drawLabel(g,tr("MODE DE ROUTAGE","ROUTING MODE"),R{196,805,260,24},15,cream,false,juce::Justification::centred,true);
+  button(g,R{201,839,118,39},tr("SÉRIE","SERIES"),[this]{set(p.state.getParameter("parallel"),0);},false,!par);
+  button(g,R{325,839,135,39},tr("PARALLÈLE","PARALLEL"),[this]{set(p.state.getParameter("parallel"),1);},false,par);
+  line(g,473,803,473,902,goldDark);
+  auto* balance=p.state.getParameter("balance");machined(g,545,847,23,balance->getValue());hits.push_back({R{516,818,58,58},{},balance});
+  drawLabel(g,"BALANCE A/B",R{578,818,166,25},15,cream,false,juce::Justification::centred,true);
+  drawLabel(g,juce::String(int(balance->getValue()*100))+" % B",R{578,851,166,28},19,cream,false,juce::Justification::centred);
+  line(g,755,803,755,902,goldDark);
+  drawLabel(g,tr("RÉDUCTION DE GAIN / SLOTS","GAIN REDUCTION / SLOTS"),R{767,800,443,28},16,cream,false,juce::Justification::centred,true);
+  for(int i=0;i<8;++i){R r{773.f+i*54,839,47,22};surface(g,r,ink,midnight,3,goldDark);float gr=p.meters[i].load();g.setColour(amber);g.fillRoundedRectangle(r.reduced(3).withWidth(41.f*std::clamp(gr/30.f,0.f,1.f)),2);drawLabel(g,juce::String(i+1),R{r.getX(),865,47,20},13,cream,false,juce::Justification::centred);}
+  line(g,1210,803,1210,902,goldDark);
+  auto* gain=p.state.getParameter("masterGain");machined(g,1262,846,23,gain->getValue());hits.push_back({R{1233,817,58,58},{},gain});
+  drawLabel(g,tr("SORTIE","OUTPUT"),R{1219,877,86,17},13,cream,false,juce::Justification::centred,true);
+  drawLabel(g,juce::String(gain->convertFrom0to1(gain->getValue()),1)+" dB",R{1305,826,89,32},15,cream,false,juce::Justification::centred);
+  auto* bypass=p.state.getParameter("masterBypass");button(g,R{1400,809,160,39},viewB?"A / [B]":"[A] / B",[this]{toggleAB();},false,viewB);
+  button(g,R{1400,857,160,39},tr("BYPASS GLOBAL","MASTER BYPASS"),[this,bypass]{set(bypass,bypass->getValue()>.5f?0.f:1.f);},false,bypass->getValue()>.5f,13);
  }
  void panel(juce::Graphics& g,const juce::String& title){using namespace clskin;surface(g,R{80,140,1440,758},sapphire,midnight,18.f,goldDark);drawLabel(g,title,R{112,157,1200,53},35,cream,true);button(g,R{1370,161,119,39},tr("RETOUR","BACK"),[this]{screen=Screen::Rack;});line(g,112,219,1488,219,goldDark,1.5f);}
  void detail(juce::Graphics& g){

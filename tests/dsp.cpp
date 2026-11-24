@@ -33,6 +33,13 @@ int main(){
  rack.configureLatency(0,false);rack.parallel=false;rack.reset();rack.params={};rack.params[0].enabled=true;rack.params[0].model=56;rack.params[0].ratio=1;for(int i=0;i<1200;++i){l=r=i==300?.5f:0.f;rack.process(l,r);require(std::abs(l-(i==300+Spectral::N?.5f:0.f))<2e-4f,"spectral unity and latency");}
  rack.reset();rack.params={};rack.params[0].enabled=true;rack.params[0].model=7;rack.params[0].delta=true;rack.params[0].ratio=1;for(int i=0;i<4096;++i){l=.5f;r=-.2f;rack.process(l,r);require(std::abs(l)+std::abs(r)<1e-6f,"delta unity null");}
  rack.reset();rack.params[0].delta=false;rack.params[0].stereoMode=1;rack.params[0].ratio=4;for(int i=0;i<96000;++i){l=.8f;r=.2f;rack.process(l,r);require(std::abs((l-r)-.6f)<1e-5f,"mid preserves side");}
+ // Meter taps must originate from real band envelopes and FFT bins.
+ rack.configureLatency(0,false);rack.parallel=false;rack.reset();rack.params={};rack.params[0].enabled=true;rack.params[0].model=54;
+ for(int n=0;n<48000;++n){l=r=.85f*std::sin(6.283185307f*80*n/48000);rack.process(l,r);}
+ require(rack.displayReduction(0,0)>0&&rack.displayReduction(0,0)>rack.displayReduction(0,3),"real band taps");
+ rack.reset();rack.params[0].model=56;for(int n=0;n<48000;++n){l=r=.8f*std::sin(6.283185307f*1500*n/48000);rack.process(l,r);}
+ require(rack.displayReduction(0,1)>0&&rack.displayReduction(0,1)>rack.displayReduction(0,15),"real FFT taps");
+ rack.params[0].enabled=false;l=r=0;rack.process(l,r);require(rack.displayReduction(0,1)==0,"disabled meter");
  std::set<std::string> fingerprints;int series=0,parallelCount=0;
  for(int i=0;i<factoryCount;++i){auto p=factoryPreset(i);p.parallel?++parallelCount:++series;std::ostringstream key;key<<p.parallel<<':'<<p.balance;
   require(p.slots[0].enabled,"preset A active");require(!p.parallel||p.slots[4].enabled,"preset B active");
