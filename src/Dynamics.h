@@ -7,6 +7,7 @@
 #include <vector>
 #include "Character.h"
 #include "ProDSP.h"
+#include "Routing.h"
 namespace liberty {
 inline float db(float x){return 20.f*std::log10(std::max(x,1.e-9f));}
 inline float gain(float x){return std::pow(10.f,x*.05f);}
@@ -274,18 +275,20 @@ public:
 
 };
 class Rack{
- std::array<Slot,8> slots;SampleDelay parallelDelay;int lookahead=0,spectralPad=0;
+ std::array<Slot,8> slots;SampleDelay parallelDelay;std::array<SampleDelay,4> branchDelays;int lookahead=0,spectralPad=0;RoutePlan plan;std::array<int,4> counts{};std::array<int,8> ordered{{0,1,2,3,4,5,6,7}};int longest=8,populated=1;float routeSmoothing=.002f;std::array<std::array<float,2>,4> currentGain{},targetGain{};bool gainsReady=false;
 public:
- std::array<Parameters,8> params{};std::array<bool,8> external{};bool parallel=false;float balance=.5f;
- void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+4096+8));}
- void reset(){for(auto& s:slots)s.reset();parallelDelay.reset();}
+ std::array<Parameters,8> params{};std::array<bool,8> external{};bool parallel=false;float balance=.5f;std::array<BranchControls,4> branchControls{};
+ void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+4096+8));for(auto& d:branchDelays)d.prepare(8*(int(sampleRate*.01f)+4096+8));routeSmoothing=1-std::exp(-1.f/(.01f*std::max(1.f,sampleRate)));gainsReady=false;}
+ void reset(){for(auto& s:slots)s.reset();parallelDelay.reset();for(auto& d:branchDelays)d.reset();gainsReady=false;}
+ void configureRouting(const RoutePlan& next,const std::array<BranchControls,4>& controls){branchControls=controls;if(!plan.sameTopology(next)){plan=next;counts=plan.counts();ordered=plan.ordered();longest=*std::max_element(counts.begin(),counts.end());populated=int(std::count_if(counts.begin(),counts.end(),[](int n){return n>0;}));reset();}bool solo=false;for(int b=0;b<4;++b)solo|=counts[b]>0&&controls[b].solo;for(int b=0;b<4;++b){targetGain[b]=routeGain(controls[b],counts[b]>0&&!controls[b].mute&&(!solo||controls[b].solo),populated);if(!gainsReady)currentGain[b]=targetGain[b];}gainsReady=true;}
  void configureLatency(int la,bool spectral,int maxFFT=Spectral::N){int pad=spectral?std::clamp(maxFFT,Spectral::N,4096):0;if(la!=lookahead||pad!=spectralPad){lookahead=la;spectralPad=pad;reset();}}
- int latency()const{return 8*(lookahead+spectralPad);}
+ int latency()const{return (plan.enabled?longest:8)*(lookahead+spectralPad);}
  float gr(size_t i)const{return slots.at(i).gr();}
  float detectorLevel(size_t i)const{return slots.at(i).detectorLevel();}
  float proBandMeter(size_t i,int group)const{return slots.at(i).proBandMeter(group);}
  float displayReduction(size_t i,int group)const{return slots.at(i).displayReduction(params.at(i).model,group);}
  void process(float& l,float& r,float scL=0.f,float scR=0.f,bool hasExternal=false){
+  if(plan.enabled){float inputL=l,inputR=r;l=r=0;for(int b=0;b<4;++b){if(counts[b]==0)continue;float a=inputL,c=inputR;for(int i:ordered)if(plan.branch[i]==b)slots[size_t(i)].process(a,c,params[size_t(i)],scL,scR,hasExternal&&external[size_t(i)],lookahead,spectralPad);branchDelays[b].process(a,c,(longest-counts[b])*(lookahead+spectralPad));for(int ch=0;ch<2;++ch)currentGain[b][ch]+=routeSmoothing*(targetGain[b][ch]-currentGain[b][ch]);l+=a*currentGain[b][0];r+=c*currentGain[b][1];}return;}
   if(!parallel){for(size_t i=0;i<8;++i)slots[i].process(l,r,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);return;}
   float aL=l,aR=r,bL=l,bR=r;
   for(size_t i=0;i<4;++i)slots[i].process(aL,aR,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);

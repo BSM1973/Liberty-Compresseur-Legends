@@ -20,8 +20,12 @@ public:
  static juce::String bandKey(int band,const char* name){return "b"+juce::String(band+1)+"_"+name;}
  static juce::String crossKey(int i){return "cross"+juce::String(i+1);}
  static constexpr int proGlobals=9,proFields=7;
+ static juce::String routeKey(int i,const char* key){return "route"+juce::String(i+1)+"_"+key;}
+ std::atomic<float> compareTrimDb{0},compareRms{-180};std::atomic<int> compareProgress{-1};std::atomic<bool> compareRequest{false},compareCancel{false};
 private:
  std::array<liberty::Rack,5> racks;
+ std::atomic<float>* designer=nullptr;std::array<std::array<std::atomic<float>*,2>,8> routeSlots{};std::array<std::array<std::atomic<float>*,5>,4> routeBranches{};
+ juce::SmoothedValue<float> comparisonGain;bool compareCapturing=false;double comparePower=0;int64_t compareSamples=0,compareTarget=1;
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;
  juce::AudioBuffer<float> scratch,dryScratch;liberty::SampleDelay masterDry;juce::SmoothedValue<float> masterGain,masterWet;std::atomic<float>* outputGain=nullptr;std::atomic<float>* masterBypass=nullptr;int masterDelay=-1;int maxBlock=0,lastQuality=-1;double sampleRate=48000;
  std::atomic<float>* quality=nullptr;std::atomic<float>* lookahead=nullptr;
@@ -63,6 +67,9 @@ private:
   out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"lookahead",1},"Lookahead (ms)",juce::NormalisableRange<float>(0,5,.5f),0));
   out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"masterGain",1},"Master output (dB)",juce::NormalisableRange<float>(-24,24,.1f),0));
   out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"masterBypass",1},"Master bypass",false));
+  out.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"designer",1},"Routing Designer",false));
+  for(int i=0;i<8;++i){addFloat(i,"routeBranch","Route Branch",0,3,1,i/4);addFloat(i,"routeOrder","Route Order",0,7,1,i);}
+  for(int b=0;b<4;++b){auto add=[&](const char* key,const char* label,float lo,float hi,float step,float def){out.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{routeKey(b,key),1},juce::String("Branch ")+juce::String(b+1)+" "+label,juce::NormalisableRange<float>(lo,hi,step),def));};add("gain","Gain",-60,12,.1f,0);add("pan","Pan",-1,1,.01f,0);add("solo","Solo",0,1,1,0);add("mute","Mute",0,1,1,0);add("invert","Polarity",0,1,1,0);}
   return out;
  }
  std::array<std::array<std::atomic<float>*,9>,8> values{};
@@ -72,7 +79,7 @@ public:
  Processor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withInput("Sidechain",juce::AudioChannelSet::stereo(),false).withOutput("Output",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"Parameters",layout()){
   const char* keys[]={"on","model","threshold","ratio","attack","release","makeup","mix","color"};
   for(int i=0;i<8;++i){meters[i].store(0);for(int j=0;j<9;++j)values[i][j]=state.getRawParameterValue(id(i,keys[j]));}
-  parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
+  parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");designer=state.getRawParameterValue("designer");for(int i=0;i<8;++i){routeSlots[i][0]=state.getRawParameterValue(id(i,"routeBranch"));routeSlots[i][1]=state.getRawParameterValue(id(i,"routeOrder"));}const char* routeKeys[]={"gain","pan","solo","mute","invert"};for(int b=0;b<4;++b)for(int k=0;k<5;++k)routeBranches[b][k]=state.getRawParameterValue(routeKey(b,routeKeys[k]));
   for(auto& cc:midiCC)cc.store(-1);
   const char* learnKeys[]={"threshold","ratio","attack","release","makeup","mix","color"};
   for(int i=0;i<8;++i){externalValues[i]=state.getRawParameterValue(id(i,"external"));detectors[i].store(0);for(int k=0;k<7;++k)midiParams[i*7+k]=state.getParameter(id(i,learnKeys[k]));}midiParams[56]=state.getParameter("balance");midiParams[57]=state.getParameter("masterGain");outputGain=state.getRawParameterValue("masterGain");masterBypass=state.getRawParameterValue("masterBypass");for(auto& slot:displayMeters)for(auto& meter:slot)meter.store(0);quality=state.getRawParameterValue("quality");lookahead=state.getRawParameterValue("lookahead");for(int i=0;i<8;++i){advancedValues[i][0]=state.getRawParameterValue(id(i,"stereo"));advancedValues[i][1]=state.getRawParameterValue(id(i,"auto"));advancedValues[i][2]=state.getRawParameterValue(id(i,"delta"));advancedValues[i][3]=state.getRawParameterValue(id(i,"analog"));advancedValues[i][4]=state.getRawParameterValue(id(i,"character"));advancedValues[i][5]=state.getRawParameterValue(id(i,"allButtons"));midiParams[58+i]=state.getParameter(id(i,"character"));
@@ -98,10 +105,10 @@ public:
   const float cross[]={120,350,1000,3500,8000};for(int k=0;k<5;++k)put(id(i,crossKey(k).toRawUTF8()),cross[k]);
   const char* fields[]={"threshold","ratio","attack","release","solo","mute","bypass"};const float bd[]={-18.f,4.f,10.f,100.f,0.f,0.f,0.f};for(int b=0;b<6;++b)for(int k=0;k<proFields;++k)put(id(i,bandKey(b,fields[k]).toRawUTF8()),bd[k]);
  }
-  put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);put("masterGain",0);put("masterBypass",0);
+  put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);put("quality",0);put("lookahead",0);put("masterGain",0);put("masterBypass",0);put("designer",0);for(int i=0;i<8;++i){put(id(i,"routeBranch"),float(i/4));put(id(i,"routeOrder"),float(i));}for(int b=0;b<4;++b)for(auto key:{"gain","pan","solo","mute","invert"})put(routeKey(b,key),0);
  }
  const juce::String getName() const override{return "Compresseur Legends";}
- void prepareToPlay(double sr,int block)override{sampleRate=sr;telemetry.prepare(float(sr));maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);dryScratch.setSize(2,maxBlock);masterDry.prepare(int(sr*.05)+32768+128);masterDelay=-1;masterGain.reset(sr,.02);masterWet.reset(sr,.02);masterGain.setCurrentAndTargetValue(liberty::gain(outputGain->load()));masterWet.setCurrentAndTargetValue(masterBypass->load()>.5f?0.f:1.f);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
+ void prepareToPlay(double sr,int block)override{sampleRate=sr;telemetry.prepare(float(sr));comparisonGain.reset(sr,.02);comparisonGain.setCurrentAndTargetValue(1.f);compareCapturing=false;compareRequest.store(false);compareCancel.store(false);compareTrimDb.store(0);compareProgress.store(-1);maxBlock=std::max(1,block);scratch.setSize(4,maxBlock);dryScratch.setSize(2,maxBlock);masterDry.prepare(int(sr*.05)+32768+128);masterDelay=-1;masterGain.reset(sr,.02);masterWet.reset(sr,.02);masterGain.setCurrentAndTargetValue(liberty::gain(outputGain->load()));masterWet.setCurrentAndTargetValue(masterBypass->load()>.5f?0.f:1.f);for(int i=0;i<5;++i){racks[i].prepare(float(sr*(1<<i)));if(i){auto os=std::make_unique<juce::dsp::Oversampling<float>>(4,size_t(i),juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,true);os->initProcessing(size_t(maxBlock));os->reset();oversamplers[i-1]=std::move(os);}}lastQuality=-1;setLatencySamples(0);}
  void releaseResources() override{for(auto& rack:racks)rack.reset();for(auto& m:meters)m.store(0);for(auto& slot:displayMeters)for(auto& m:slot)m.store(0);masterDry.reset();for(auto& slot:proMeters)for(auto& m:slot)m.store(0);}
  bool isBusesLayoutSupported(const BusesLayout& b)const override{const auto main=b.getMainOutputChannelSet();const auto sc=b.getChannelSet(true,1);return b.getMainInputChannelSet()==main&&(main==juce::AudioChannelSet::mono()||main==juce::AudioChannelSet::stereo())&&(sc.isDisabled()||sc==juce::AudioChannelSet::mono()||sc==juce::AudioChannelSet::stereo());}
  void processBlock(juce::AudioBuffer<float>& buffer,juce::MidiBuffer& midi)override{
@@ -112,7 +119,7 @@ public:
   auto& z=p.pro;const auto& w=proValues[i];z.enabled=w[0]->load()>.5f;z.count=int(w[1]->load());z.fft=512<<std::clamp(int(w[2]->load()),0,3);z.link=w[3]->load();z.hp=w[4]->load();z.lp=w[5]->load();z.bellHz=w[6]->load();z.bellGain=w[7]->load();z.listen=w[8]->load()>.5f;
   for(int k=0;k<5;++k)z.cross[k]=w[proGlobals+k]->load();for(int b=0;b<6;++b){auto& band=z.bands[b];int k=proGlobals+5+b*proFields;band.threshold=w[k]->load();band.ratio=w[k+1]->load();band.attack=w[k+2]->load();band.release=w[k+3]->load();band.solo=w[k+4]->load()>.5f;band.mute=w[k+5]->load()>.5f;band.bypass=w[k+6]->load()>.5f;}}
   bool spectral=false;int maxFFT=liberty::Spectral::N;for(auto& s:rack.params)if(s.enabled&&liberty::models[size_t(std::clamp(s.model,0,liberty::modelCount-1))].architecture==9){spectral=true;if(s.pro.enabled)maxFFT=std::max(maxFFT,liberty::proFFT(s.pro.fft));}processingRate.store(float(sampleRate*factor));
-  int la=int(std::round(sampleRate*lookahead->load()*.001))*factor;rack.configureLatency(la,spectral,maxFFT);
+  int la=int(std::round(sampleRate*lookahead->load()*.001))*factor;rack.configureLatency(la,spectral,maxFFT);liberty::RoutePlan rp;rp.enabled=designer->load()>.5f;for(int i=0;i<8;++i){rp.branch[i]=std::clamp(int(routeSlots[i][0]->load()),0,3);rp.order[i]=std::clamp(int(routeSlots[i][1]->load()),0,7);}std::array<liberty::BranchControls,4> bc{};for(int b=0;b<4;++b){const auto& x=routeBranches[b];bc[b]={x[0]->load(),x[1]->load(),x[2]->load()>.5f,x[3]->load()>.5f,x[4]->load()>.5f};}rack.configureRouting(rp,bc);
   int latency=rack.latency()/factor+(q&&oversamplers[q-1]?int(std::round(oversamplers[q-1]->getLatencyInSamples())):0);if(latency!=getLatencySamples())setLatencySamples(latency);
   auto main=getBusBuffer(buffer,false,0);auto side=getBusBuffer(buffer,true,1);
   const bool has=side.getNumChannels()>0;sidechainAvailable.store(has);
@@ -120,7 +127,7 @@ public:
   auto* l=main.getWritePointer(0);auto* r=main.getNumChannels()>1?main.getWritePointer(1):nullptr;
   const float* sl=has?side.getReadPointer(0):nullptr;const float* sr=side.getNumChannels()>1?side.getReadPointer(1):sl;
   if(maxBlock<=0)return;
-  const bool analyze=telemetry.begin(r?2:1);
+  const bool analyze=telemetry.begin(r?2:1);if(compareCancel.exchange(false)){compareCapturing=false;compareProgress.store(-1);}if(compareRequest.exchange(false)){compareCapturing=true;compareSamples=0;comparePower=0;compareTarget=std::max<int64_t>(1,int64_t(sampleRate*4));compareProgress.store(0);}comparisonGain.setTargetValue(liberty::gain(std::clamp(compareTrimDb.load(),-12.f,12.f)));
   if(masterDelay!=latency){masterDry.reset();masterDelay=latency;}
   masterGain.setTargetValue(liberty::gain(outputGain->load()));masterWet.setTargetValue(masterBypass->load()>.5f?0.f:1.f);
   for(int offset=0;offset<main.getNumSamples();offset+=maxBlock){
@@ -133,8 +140,9 @@ public:
     for(size_t j=0;j<up.getNumSamples();++j)rack.process(ul[j],ur[j],usl[j],usr[j],has);
     oversamplers[q-1]->processSamplesDown(sub);for(int j=0;j<n;++j){l[offset+j]=scratch.getSample(0,j);if(r)r[offset+j]=scratch.getSample(1,j);}
    }
-   for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}if(analyze)telemetry.sample(dryScratch.getSample(0,j),dryScratch.getSample(1,j),l[i],r?r[i]:l[i]);}
+   for(int j=0;j<n;++j){int i=offset+j;float gain=masterGain.getNextValue(),wet=masterWet.getNextValue();if(wet==1.f){l[i]*=gain;if(r)r[i]*=gain;}else{float dl=dryScratch.getSample(0,j),dr=dryScratch.getSample(1,j);l[i]=dl+(l[i]*gain-dl)*wet;if(r)r[i]=dr+(r[i]*gain-dr)*wet;}if(compareCapturing){float a=l[i],b=r?r[i]:a;comparePower+=.5*(double(a)*a+double(b)*b);if(++compareSamples>=compareTarget){compareRms.store(liberty::db(float(std::sqrt(comparePower/compareSamples))));compareCapturing=false;compareProgress.store(100,std::memory_order_release);}}float cg=comparisonGain.getNextValue();l[i]*=cg;if(r)r[i]*=cg;if(analyze)telemetry.sample(dryScratch.getSample(0,j),dryScratch.getSample(1,j),l[i],r?r[i]:l[i]);}
   }
+  if(compareCapturing)compareProgress.store(int(100*compareSamples/compareTarget));
   telemetry.end();
   for(int i=0;i<8;++i){meters[i].store(rack.gr(i),std::memory_order_relaxed);detectors[i].store(rack.detectorLevel(i),std::memory_order_relaxed);for(int group=0;group<16;++group)displayMeters[i][group].store(rack.displayReduction(size_t(i),group),std::memory_order_relaxed);for(int b=0;b<6;++b)proMeters[i][b].store(rack.proBandMeter(size_t(i),b),std::memory_order_relaxed);}
  }
@@ -144,7 +152,7 @@ public:
  double getTailLengthSeconds()const override{return 0;}
  int getNumPrograms()override{return 1;}int getCurrentProgram()override{return 0;}void setCurrentProgram(int)override{}const juce::String getProgramName(int)override{return "Initial";}void changeProgramName(int,const juce::String&)override{}
  void getStateInformation(juce::MemoryBlock& data)override{auto tree=state.copyState();for(int i=0;i<midiTargets;++i)tree.setProperty(juce::Identifier("cc"+juce::String(i)),midiCC[i].load(),nullptr);if(auto xml=tree.createXml())copyXmlToBinary(*xml,data);}
- void setStateInformation(const void* data,int size)override{if(auto xml=getXmlFromBinary(data,size))if(xml->hasTagName(state.state.getType())){auto tree=juce::ValueTree::fromXml(*xml);for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(tree.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);for(int i=0;i<8;++i)for(auto key:{"analog","character","allButtons"}){auto pid=id(i,key);bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",juce::String(key)=="character"?.65:0.,nullptr);tree.addChild(child,-1,nullptr);}}for(auto* parameter:getParameters()){auto* a=dynamic_cast<juce::RangedAudioParameter*>(parameter);if(!a)continue;auto pid=a->getParameterID();bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",a->convertFrom0to1(a->getDefaultValue()),nullptr);tree.addChild(child,-1,nullptr);}}state.replaceState(tree); }}
+ void setStateInformation(const void* data,int size)override{if(auto xml=getXmlFromBinary(data,size))if(xml->hasTagName(state.state.getType())){auto tree=juce::ValueTree::fromXml(*xml);for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(tree.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);compareTrimDb.store(0);compareCancel.store(true);for(int i=0;i<8;++i)for(auto key:{"analog","character","allButtons"}){auto pid=id(i,key);bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",juce::String(key)=="character"?.65:0.,nullptr);tree.addChild(child,-1,nullptr);}}for(auto* parameter:getParameters()){auto* a=dynamic_cast<juce::RangedAudioParameter*>(parameter);if(!a)continue;auto pid=a->getParameterID();bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",a->convertFrom0to1(a->getDefaultValue()),nullptr);tree.addChild(child,-1,nullptr);}}state.replaceState(tree); }}
 };
 #include "Editor.h"
 juce::AudioProcessorEditor* Processor::createEditor(){return new Editor(*this);}

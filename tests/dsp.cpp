@@ -79,6 +79,13 @@ int main(){
  AudioTelemetry telemetry;telemetry.prepare(48000);telemetry.enabled.store(true);for(int block=0;block<1600;++block){telemetry.begin(2);for(int n=0;n<128;++n){float x=.5f*std::sin(6.283185307179586*(block*128+n)/48.);telemetry.sample(x,x,x*.5f,x*.5f);}telemetry.end();}
  require(telemetry.meterReady.load()&&telemetry.shortReady.load(),"loudness windows");require(std::abs(telemetry.correlation.load()-1)<.001,"stereo correlation");require(std::abs(telemetry.rms[0].load()-telemetry.rms[1].load()-6.0206f)<.02,"rms level difference");require(std::abs(telemetry.momentary[0].load()-telemetry.momentary[1].load()-6.0206f)<.02,"loudness level difference");
  TelemetrySnapshot shot;require(telemetry.snapshot(shot),"telemetry snapshot");auto fft=spectrum(shot.inL,shot.inR);int peakBin=int(std::max_element(fft.begin(),fft.end())-fft.begin());require(std::abs(peakBin-43)<=1,"FFT tone frequency");
+ // Designer: four parallel lanes, unequal paths, unity gain, polarity and pan.
+ RoutePlan route;route.enabled=true;route.branch={{0,0,0,0,1,2,3,3}};std::array<BranchControls,4> bc{};
+ rack.params={};rack.parallel=false;rack.configureLatency(0,true,512);rack.configureRouting(route,bc);int delay=rack.latency();require(delay==4*512,"designer longest branch");for(int i=0;i<=delay;++i){l=r=i==0?1.f:0.f;rack.process(l,r);require(std::abs(l-(i==delay?1.f:0.f))<1e-6f&&std::abs(r-l)<1e-6f,"four branch alignment");}
+ rack.configureLatency(0,false);rack.reset();rack.configureRouting(route,bc);l=.5f;r=-.2f;rack.process(l,r);require(std::abs(l-.5f)<1e-6f&&std::abs(r+.2f)<1e-6f,"designer unity");
+ bc[0].solo=true;bc[0].pan=-1;bc[0].invert=true;rack.reset();rack.configureRouting(route,bc);l=r=.5f;rack.process(l,r);require(std::abs(l+.125f)<1e-6f&&std::abs(r)<1e-6f,"solo polarity pan");
+ bc[0].mute=true;rack.reset();rack.configureRouting(route,bc);l=r=.5f;rack.process(l,r);require(l==0&&r==0,"mute beats solo");
+ route.enabled=false;rack.configureRouting(route,{});rack.reset();
  std::set<std::string> fingerprints;int series=0,parallelCount=0;
  for(int i=0;i<factoryCount;++i){auto p=factoryPreset(i);p.parallel?++parallelCount:++series;std::ostringstream key;key<<p.parallel<<':'<<p.balance;
   require(p.slots[0].enabled,"preset A active");require(!p.parallel||p.slots[4].enabled,"preset B active");

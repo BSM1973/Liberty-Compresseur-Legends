@@ -36,3 +36,6 @@ DNA: background editor worker measures all 60 actual software models at 48 kHz w
 
 ## v0.7.1
 Correct telemetry frame publication at the end of processBlock; publish completed Match measurements before the 100% flag. Use this revision for validation.
+
+## v0.8.0 Routing Designer & Preset Lab (experimental)
+Four parallel lanes with each of 8 slots assigned exactly once; drag/drop and serial order per lane, gain/pan/solo/mute/polarity, 10 ms gain smoothing, normalized by populated branches (empty lanes excluded), compensation to longest branch. Topology changes reset DSP, edit stopped. Existing series and A/B modes unchanged. Preset Lab stores local versioned .clpreset XML files, name/category/tags, search, import/export with validation, session-local 32-step editor undo/redo, gentle/intense heuristic variations, manual four-second A/B RMS comparison (same passage, temporary B trim ±12 dB). Factory presets remain unchanged, reset Designer to legacy. History does not capture DAW automation or MIDI; level match is not perceptual loudness, not persistent. Host and visual validation pending.

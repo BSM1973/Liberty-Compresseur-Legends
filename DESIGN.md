@@ -18,3 +18,5 @@ v0.5.0: individualized metal finish, trim and cap styles by model ID; dedicated 
 v0.6.0: PRO page for multiband/spectral, bands and sidechain subpages, six independent bands, FFT controls, live gain reduction. Existing XL dimensions preserved; verify actual host layout.
 
 v0.7.0: Intelligence button opens three paginated pages; DNA asynchronous local measurements; Match capture and explicit apply; Analyzer real audio telemetry. Existing 1600x930 logical layout preserved.
+
+v0.8.0: four fixed lanes, 8 native slot tiles, drag/drop, compact independent branch mixer, no scrollbars; Preset Lab three tabs, paginated personal list and real text editors. Existing 1600x930 design preserved.
