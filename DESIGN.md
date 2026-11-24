@@ -8,3 +8,5 @@ Version 0.1.3 : fenêtre adaptative redimensionnable et encyclopédie paginée s
 v0.2.0 : bibliothèque 3 pages, navigateur 10 lignes/page, recherche, catégories, favoris de session ; géométrie XL inchangée.
 
 v0.3.0 : 5 pages bibliothèque, 200 presets, page analyse, sidechain par slot, MIDI Learn clic droit, favoris persistants. Géométrie XL conservée.
+
+v0.4.0 : bibliothèque 8 pages, presets 400, traitements avancés dans une page dédiée. XL inchangé.

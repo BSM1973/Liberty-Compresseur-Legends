@@ -3,11 +3,13 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <complex>
+#include <vector>
 namespace liberty {
 inline float db(float x){return 20.f*std::log10(std::max(x,1.e-9f));}
 inline float gain(float x){return std::pow(10.f,x*.05f);}
 struct Model{const char* name;float attackScale,releaseScale,knee,memory,drive,rms;bool feedback;int architecture=0;};
-inline constexpr int modelCount=40;
+inline constexpr int modelCount=60;
 inline constexpr std::array<Model,modelCount> models {{
  {"FET Impact", .25f, .65f, 2.f, .04f, .23f, .05f, true},
  {"Opto Velvet", 2.5f, 1.8f, 9.f, .72f, .12f, .60f, true},
@@ -48,9 +50,29 @@ inline constexpr std::array<Model,modelCount> models {{
  {"Dual Band Punch",0.5f,0.7f,2.0f,0.04f,0.0f,0.15f,false,5},
  {"Dual Band Master",1.6f,1.8f,9.0f,0.22f,0.0f,0.7f,false,5},
  {"Adaptive Parallel",0.7f,0.8f,3.0f,0.12f,0.06f,0.3f,false,1},
- {"Transient Sculpt",0.25f,0.6f,1.0f,0.02f,0.0f,0.1f,false,2}
+ {"Transient Sculpt",0.25f,0.6f,1.0f,0.02f,0.0f,0.1f,false,2},
+ {"FET Vintage",0.55f,1.3f,4.0f,0.15f,0.34f,0.18f,true,0},
+ {"FET Studio",0.32f,0.9f,3.0f,0.08f,0.12f,0.25f,true,0},
+ {"Opto Master",2.0f,2.1f,12.0f,0.6f,0.04f,0.8f,false,0},
+ {"Opto Tube",2.7f,2.4f,10.0f,0.72f,0.3f,0.6f,true,1},
+ {"VCA Tight",0.45f,0.65f,2.0f,0.04f,0.025f,0.2f,false,0},
+ {"VCA Console",1.0f,1.2f,6.0f,0.12f,0.08f,0.6f,false,1},
+ {"Vari-Mu Royal",3.0f,2.6f,20.0f,0.7f,0.23f,0.65f,true,0},
+ {"Vari-Mu Focus",1.25f,1.7f,10.0f,0.25f,0.17f,0.3f,true,0},
+ {"Diode Vintage",1.0f,1.5f,6.0f,0.2f,0.44f,0.25f,true,0},
+ {"Diode Velvet",2.2f,2.2f,13.0f,0.45f,0.15f,0.7f,true,1},
+ {"PWM Pulse",0.35f,0.8f,2.0f,0.04f,0.04f,0.1f,false,6},
+ {"PWM Studio",0.8f,1.1f,5.0f,0.12f,0.03f,0.4f,false,6},
+ {"Tri Band Control",1.0f,1.0f,5.0f,0.12f,0.0f,0.45f,false,7},
+ {"Tri Band Master",1.5f,1.8f,8.0f,0.2f,0.0f,0.7f,false,7},
+ {"Quad Band Focus",0.8f,1.0f,4.0f,0.1f,0.0f,0.35f,false,8},
+ {"Quad Band Smooth",1.7f,2.0f,9.0f,0.3f,0.0f,0.75f,false,8},
+ {"Spectral Balance",1.0f,1.0f,6.0f,0.12f,0.0f,0.45f,false,9},
+ {"Spectral Detail",0.6f,0.8f,3.0f,0.04f,0.0f,0.25f,false,9},
+ {"Spectral Master",1.5f,1.8f,10.0f,0.2f,0.0f,0.65f,false,9},
+ {"Spectral Focus",0.4f,0.65f,2.0f,0.02f,0.0f,0.15f,false,9}
 }};
-struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;};
+struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;int stereoMode=0;bool autoGain=false,delta=false;};
 inline float reduction(float over,float ratio,float knee){
  const float slope=1.f-1.f/std::max(1.f,ratio);
  if(knee<=0.f)return std::max(0.f,over)*slope;
@@ -67,19 +89,80 @@ inline float nominalReduction(float inputDb,const Model& m,const Parameters& p,b
  for(int i=0;i<20;++i){float mid=(lo+hi)*.5f;if(reduction(inputDb-mid-p.threshold,effective,m.knee)>mid)lo=mid;else hi=mid;}
  return (lo+hi)*.5f;
 }
+
+// Streaming 256-point STFT, 50% overlap, sine window, linked bin envelopes.
+// Fixed N sample delay; zero allocation during processing.
+class Spectral {
+ using C=std::complex<float>;
+public:
+ static constexpr int N=256,H=N/2;
+private:
+ std::array<float,N> inL{},inR{},detL{},detR{},outL{},outR{},window{};
+ std::array<float,N/2+1> env{};
+ std::array<C,N> a{},b{},c{},d{};
+ int pos=0,hop=0;float gr=0,det=0;
+ static void fft(std::array<C,N>& x,bool inverse){
+  for(int i=1,j=0;i<N;++i){int bit=N>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;if(i<j)std::swap(x[i],x[j]);}
+  for(int len=2;len<=N;len<<=1){float angle=(inverse?1.f:-1.f)*6.283185307f/len;C step(std::cos(angle),std::sin(angle));
+   for(int i=0;i<N;i+=len){C w(1,0);for(int j=0;j<len/2;++j){C u=x[i+j],v=x[i+j+len/2]*w;x[i+j]=u+v;x[i+j+len/2]=u-v;w*=step;}}}
+  if(inverse)for(auto& q:x)q/=float(N);
+ }
+public:
+ void prepare(){for(int i=0;i<N;++i)window[i]=std::sin(3.141592654f*(i+.5f)/N);reset();}
+ void reset(){inL.fill(0);inR.fill(0);detL.fill(0);detR.fill(0);outL.fill(0);outR.fill(0);env.fill(0);pos=hop=0;gr=det=0;}
+ float reductionDb()const{return gr;}float detector()const{return det;}
+ void process(float& l,float& r,float dl,float dr,float sr,const Model& m,const Parameters& p,bool separate){
+  const float ol=outL[pos],orr=outR[pos];outL[pos]=outR[pos]=0;
+  inL[pos]=l;inR[pos]=r;detL[pos]=dl;detR[pos]=dr;pos=(pos+1)%N;
+  if(++hop==H){hop=0;
+   for(int i=0;i<N;++i){int j=(pos+i)%N;float w=window[i];a[i]=inL[j]*w;b[i]=inR[j]*w;if(separate){c[i]=detL[j]*w;d[i]=detR[j]*w;}}
+   fft(a,false);fft(b,false);if(separate){fft(c,false);fft(d,false);}
+   const float at=std::exp(-1000.f*H/(std::max(.05f,p.attack*m.attackScale)*sr)),rel=std::exp(-1000.f*H/(std::max(.05f,p.release*m.releaseScale)*sr));gr=det=0;
+   for(int k=0;k<=N/2;++k){float mag=std::max(std::abs(separate?c[k]:a[k]),std::abs(separate?d[k]:b[k]))*(k==0||k==N/2?1.f:2.f)/(N*.63661977f);
+    det=std::max(det,mag);float target=reduction(db(mag)-p.threshold,p.ratio,m.knee);float coeff=target>env[k]?at:rel;env[k]=coeff*env[k]+(1-coeff)*target;gr=std::max(gr,env[k]);
+    float g=gain(p.makeup-env[k]);a[k]*=g;b[k]*=g;if(k>0&&k<N/2){a[N-k]*=g;b[N-k]*=g;}}
+   fft(a,true);fft(b,true);for(int i=0;i<N;++i){int j=(pos+i)%N;outL[j]+=a[i].real()*window[i];outR[j]+=b[i].real()*window[i];}
+  }
+  l=ol;r=orr;
+ }
+};
+class SampleDelay {
+ std::vector<float> l,r;size_t pos=0;
+public:
+ void prepare(int max){l.assign(size_t(max+1),0);r.assign(size_t(max+1),0);pos=0;}
+ void reset(){std::fill(l.begin(),l.end(),0);std::fill(r.begin(),r.end(),0);pos=0;}
+ void process(float& a,float& b,int delay){if(l.empty())return;delay=std::clamp(delay,0,int(l.size()-1));l[pos]=a;r[pos]=b;size_t rd=(pos+l.size()-size_t(delay))%l.size();a=l[rd];b=r[rd];pos=(pos+1)%l.size();}
+};
+
 class Slot{
  float sr=48000.f,env=0.f,slow=0.f,power=0.f,previous=0.f,applied=0.f;
- float lowL=0,lowR=0,detLowL=0,detLowR=0,bandEnv[2]{},bandPower[2]{},bandSlow[2]{},lastDetector=0;
+ float lowL=0,lowR=0,detLowL=0,detLowR=0,bandEnv[4]{},bandPower[4]{},bandSlow[4]{},lastDetector=0;
+ float splitL[3]{},splitR[3]{},splitDL[3]{},splitDR[3]{};
+ Spectral spectral; SampleDelay signalDelay,dryDelay;
+ float inPower=0,outPower=0,autoDb=0;
+ int lastModel=-1;bool wasEnabled=false;
+ float cachedAttack=-1,cachedRelease=-1,cachedRate=-1,cachedA=0,cachedR=0,cachedSlow=0,cachedRms=0;
  static float coefficient(float ms,float sr){return std::exp(-1000.f/(std::max(.05f,ms)*sr));}
 public:
- void prepare(float rate){sr=std::max(1.f,rate);reset();}
- void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<2;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;}
+ void prepare(float rate){sr=std::max(1.f,rate);signalDelay.prepare(int(sr*.01f)+Spectral::N+8);dryDelay.prepare(int(sr*.01f)+Spectral::N+8);spectral.prepare();reset();}
+ void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;}
  float gr()const{return applied;}
  float detectorLevel()const{return lastDetector;}
- void process(float& l,float& r,const Parameters& p,float scL=0.f,float scR=0.f,bool external=false){
-  if(!p.enabled){reset();return;}
+ void core(float& l,float& r,const Parameters& p,float scL,float scR,bool external){
+  if(!p.enabled){applied=lastDetector=0;return;}
   const auto& m=models[static_cast<size_t>(std::clamp(p.model,0,modelCount-1))];
   const float dl=external?scL:l,dr=external?scR:r;
+  if(m.architecture==9){spectral.process(l,r,dl,dr,sr,m,p,external);applied=spectral.reductionDb();lastDetector=spectral.detector();return;}
+  if(m.architecture==7||m.architecture==8){
+   int bands=m.architecture==7?3:4;const float hz3[]={180,2500,0},hz4[]={120,600,3500};const float* hz=bands==3?hz3:hz4;
+   float al[4]{},ar[4]{},bl[4]{},br[4]{},lastL=0,lastR=0,lastDL=0,lastDR=0;
+   for(int i=0;i<bands-1;++i){float c=1-std::exp(-6.283185307f*hz[i]/sr);splitL[i]+=c*(l-splitL[i]);splitR[i]+=c*(r-splitR[i]);splitDL[i]+=c*(dl-splitDL[i]);splitDR[i]+=c*(dr-splitDR[i]);al[i]=splitL[i]-lastL;ar[i]=splitR[i]-lastR;bl[i]=splitDL[i]-lastDL;br[i]=splitDR[i]-lastDR;lastL=splitL[i];lastR=splitR[i];lastDL=splitDL[i];lastDR=splitDR[i];}
+   al[bands-1]=l-lastL;ar[bands-1]=r-lastR;bl[bands-1]=dl-lastDL;br[bands-1]=dr-lastDR;
+   applied=lastDetector=0;float outL=0,outR=0;
+   float rmsC=coefficient(15,sr),at=coefficient(p.attack*m.attackScale,sr),rel=coefficient(p.release*m.releaseScale,sr);
+   for(int i=0;i<bands;++i){float peak=std::max(std::abs(bl[i]),std::abs(br[i]));lastDetector=std::max(lastDetector,peak);bandPower[i]=rmsC*bandPower[i]+(1-rmsC)*peak*peak;float level=(1-m.rms)*peak+m.rms*std::sqrt(std::max(0.f,bandPower[i]));float target=reduction(db(level)-p.threshold,p.ratio,m.knee);float c=target>bandEnv[i]?at:rel;bandEnv[i]=c*bandEnv[i]+(1-c)*target;applied=std::max(applied,bandEnv[i]);float g=gain(p.makeup-bandEnv[i]);outL+=al[i]*g;outR+=ar[i]*g;}
+   l+=(outL-l)*p.mix;r+=(outR-r)*p.mix;return;
+  }
   if(m.architecture==5){
    const float split=1.f-std::exp(-6.283185307f*220.f/sr);
    lowL+=split*(l-lowL);lowR+=split*(r-lowR);detLowL+=split*(dl-detLowL);detLowR+=split*(dr-detLowR);
@@ -113,29 +196,58 @@ public:
   const float ratio=std::clamp(p.ratio,1.f,20.f);
   const float effective=m.feedback?1.f+std::min(100.f,ratio-1.f)*2.f:ratio;
   const float target=reduction(db(level)-p.threshold,effective,m.knee);
-  const float a=coefficient(p.attack*m.attackScale,sr),rel=coefficient(p.release*m.releaseScale*(m.architecture==1?1.f+std::min(3.f,slow*.12f):1.f),sr),slowC=coefficient(p.release*m.releaseScale*5.f,sr);
+  if(cachedAttack!=p.attack*m.attackScale||cachedRelease!=p.release*m.releaseScale||cachedRate!=sr){cachedAttack=p.attack*m.attackScale;cachedRelease=p.release*m.releaseScale;cachedRate=sr;cachedA=coefficient(cachedAttack,sr);cachedR=coefficient(cachedRelease,sr);cachedSlow=coefficient(cachedRelease*5,sr);}
+  const float a=cachedA,rel=m.architecture==1?coefficient(cachedRelease*(1.f+std::min(3.f,slow*.12f)),sr):cachedR,slowC=cachedSlow;
   const float c=target>env?a:rel;
   env=c*env+(1.f-c)*target;slow=slowC*slow+(1-slowC)*target;
-  applied=std::max(env,m.memory*slow);previous=applied;
+  applied=std::max(env,m.memory*slow);if(m.architecture==6){float duty=gain(-applied);applied=-db(std::clamp(duty,.01f,1.f));}previous=applied;
   const float g=gain(p.makeup-applied),mix=std::clamp(p.mix,0.f,1.f),drive=m.drive*std::clamp(p.color,0.f,1.f);
   auto shape=[&](float x){if(drive<=0.f)return x;const float d=1.f+drive*4.f;return std::tanh(d*x)/d;};
   l+=(shape(l*g)-l)*mix;r+=(shape(r*g)-r)*mix;
  }
+ void process(float& l,float& r,const Parameters& p,float scL=0,float scR=0,bool external=false,int lookahead=0,bool spectralPad=false){
+  const auto& m=models[size_t(std::clamp(p.model,0,modelCount-1))];
+  if(!p.enabled&&!wasEnabled&&lookahead==0&&!spectralPad){applied=lastDetector=0;return;}
+  if(p.model!=lastModel||p.enabled!=wasEnabled){reset();lastModel=p.model;wasEnabled=p.enabled;}
+  if(!lookahead&&!spectralPad&&m.architecture!=9&&!p.stereoMode&&!p.autoGain&&!p.delta){core(l,r,p,scL,scR,external);return;}
+  float detectorL=external?scL:l,detectorR=external?scR:r;
+  float dryL=l,dryR=r;const bool spectralOn=p.enabled&&m.architecture==9;
+  const int total=lookahead+(spectralPad||spectralOn?Spectral::N:0);
+  dryDelay.process(dryL,dryR,total);
+  if(!p.enabled){l=dryL;r=dryR;return;}
+  signalDelay.process(l,r,lookahead+(spectralPad&&!spectralOn?Spectral::N:0));
+  // Detector leads the delayed signal by the lookahead only. Spectral padding
+  // on nonspectral stages is compensation; delay detector with the signal
+  // when no explicit external detector or lookahead is selected.
+  bool useDetector=external||lookahead>0;
+  if(spectralPad&&!spectralOn&&!external&&lookahead==0){detectorL=l;detectorR=r;}
+  auto wet=p;wet.mix=1;float keep=0;
+  if(p.stereoMode){float mid=.5f*(l+r),side=.5f*(l-r);keep=p.stereoMode==1?.5f*(dryL-dryR):.5f*(dryL+dryR);l=r=p.stereoMode==1?mid:side;
+   float dd=p.stereoMode==1?.5f*(detectorL+detectorR):.5f*(detectorL-detectorR);detectorL=detectorR=dd;}
+  core(l,r,wet,detectorL,detectorR,useDetector);
+  if(p.stereoMode){float z=.5f*(l+r);if(p.stereoMode==1){l=z+keep;r=z-keep;}else{l=keep+z;r=keep-z;}}
+  if(p.autoGain){float c=1-std::exp(-1.f/(.4f*sr));inPower+=c*(.5f*(dryL*dryL+dryR*dryR)-inPower);outPower+=c*(.5f*(l*l+r*r)-outPower);
+   float target=inPower>1e-7f&&outPower>1e-9f?std::clamp(10.f*std::log10(inPower/outPower),-12.f,12.f):0;autoDb+=c*(target-autoDb);float g=gain(autoDb);l*=g;r*=g;}
+  l=dryL+(l-dryL)*p.mix;r=dryR+(r-dryR)*p.mix;if(p.delta){l=dryL-l;r=dryR-r;}
+ }
+
 };
 class Rack{
- std::array<Slot,8> slots;
+ std::array<Slot,8> slots;SampleDelay parallelDelay;int lookahead=0;bool spectralPad=false;
 public:
  std::array<Parameters,8> params{};std::array<bool,8> external{};bool parallel=false;float balance=.5f;
- void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);}
- void reset(){for(auto& s:slots)s.reset();}
+ void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+Spectral::N+8));}
+ void reset(){for(auto& s:slots)s.reset();parallelDelay.reset();}
+ void configureLatency(int la,bool spectral){if(la!=lookahead||spectral!=spectralPad){lookahead=la;spectralPad=spectral;reset();}}
+ int latency()const{return 8*(lookahead+(spectralPad?Spectral::N:0));}
  float gr(size_t i)const{return slots.at(i).gr();}
  float detectorLevel(size_t i)const{return slots.at(i).detectorLevel();}
  void process(float& l,float& r,float scL=0.f,float scR=0.f,bool hasExternal=false){
-  if(!parallel){for(size_t i=0;i<8;++i)slots[i].process(l,r,params[i],scL,scR,hasExternal&&external[i]);return;}
+  if(!parallel){for(size_t i=0;i<8;++i)slots[i].process(l,r,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);return;}
   float aL=l,aR=r,bL=l,bR=r;
-  for(size_t i=0;i<4;++i)slots[i].process(aL,aR,params[i],scL,scR,hasExternal&&external[i]);
-  for(size_t i=4;i<8;++i)slots[i].process(bL,bR,params[i],scL,scR,hasExternal&&external[i]);
-  const float b=std::clamp(balance,0.f,1.f);l=aL+(bL-aL)*b;r=aR+(bR-aR)*b;
+  for(size_t i=0;i<4;++i)slots[i].process(aL,aR,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);
+  for(size_t i=4;i<8;++i)slots[i].process(bL,bR,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);
+  const float b=std::clamp(balance,0.f,1.f);l=aL+(bL-aL)*b;r=aR+(bR-aR)*b;parallelDelay.process(l,r,4*(lookahead+(spectralPad?Spectral::N:0)));
  }
 };
 }

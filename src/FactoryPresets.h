@@ -1,7 +1,7 @@
 #pragma once
 #include "Dynamics.h"
 namespace liberty {
-inline constexpr int factoryCount=200,categoryCount=10;
+inline constexpr int factoryCount=400,categoryCount=10;
 struct Category{const char* fr;const char* en;std::array<int,5> models;float threshold,ratio,attack,release,color;const char* prefix;};
 inline constexpr std::array<Category,categoryCount> categories{{
  {"Voix","Vocals",{0,1,8,10,11},-22.0f,3.0f,12.0f,160.0f,0.1f,"Lead vocal"},
@@ -30,6 +30,11 @@ inline FactoryPreset factoryPreset(int index){
  if(advanced){
   constexpr int ids[10][5]={{20,22,23,30,31},{21,25,28,36,39},{23,25,32,35,38},{20,23,26,33,34},{22,24,30,34,37},{24,25,27,28,29},{24,26,30,34,37},{26,29,30,34,37},{21,27,28,38,39},{20,31,33,36,39}};
   p.slots[0].model=ids[c][k];if(p.slots[1].enabled)p.slots[1].model=ids[c][1];if(p.slots[4].enabled)p.slots[4].model=ids[c][(k+2)%5];if(p.slots[5].enabled)p.slots[5].model=ids[c][0];
+ }
+ if(index>=200){
+  constexpr int ids[10][5]={{40,42,43,56,57},{41,44,48,54,59},{42,50,52,53,55},{40,43,46,52,57},{42,45,53,55,58},{44,45,47,49,54},{45,46,52,55,58},{46,49,53,55,58},{48,50,51,56,59},{40,44,51,54,57}};
+  p.slots[0].model=ids[c][k];if(p.slots[1].enabled)p.slots[1].model=ids[c][1];if(p.slots[4].enabled)p.slots[4].model=ids[c][(k+2)%5];if(p.slots[5].enabled)p.slots[5].model=ids[c][0];
+  if(index>=300){p.slots[0].threshold=std::max(-60.f,p.slots[0].threshold-3.f);p.slots[0].mix=.78f;p.slots[0].autoGain=true;if(c>=5&&c<=7)p.slots[0].stereoMode=1;}
  }
  return p;
 }

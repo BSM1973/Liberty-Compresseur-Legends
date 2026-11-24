@@ -27,7 +27,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  using R=clskin::R;
  using AP=Processor::APVTS;
  Processor& p;
- enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis};
+ enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis,Advanced};
  Screen screen=Screen::Rack;
  int selected=0;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;
  std::array<std::array<float,120>,8> grHistory{};int grHead=0;bool french=true,viewB=false;
@@ -45,10 +45,10 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  bool on(int slot){return raw(slot,"on")>.5f;}
  void set(juce::RangedAudioParameter* a,float v){if(!a)return;a->beginChangeGesture();a->setValueNotifyingHost(juce::jlimit(0.f,1.f,v));a->endChangeGesture();}
  void setRaw(int slot,const char* key,float v){auto* a=param(slot,key);set(a,a->convertTo0to1(v));}
- void swapSlots(int a,int b){if(b<0||b>=8)return;for(auto key:{"on","model","threshold","ratio","attack","release","makeup","mix","color","external"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}selected=b;}
+ void swapSlots(int a,int b){if(b<0||b>=8)return;for(auto key:{"on","model","threshold","ratio","attack","release","makeup","mix","color","external","stereo","auto","delta"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}selected=b;}
  void toggleAB(){if(viewB){snapshotB=p.state.copyState();p.state.replaceState(snapshotA.createCopy());}else{snapshotA=p.state.copyState();p.state.replaceState(snapshotB.createCopy());}viewB=!viewB;}
- static juce::Colour color(int m){constexpr unsigned c[]={0xff8d2638,0xff655e50,0xff58616b,0xff536677,0xff643654,0xff286054,0xff756956,0xff41454d,0xff8d2638,0xff763344,0xff6c6352,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff8d2638,0xff763344,0xff655e50,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff41454d,0xff4b505b,0xff64538e,0xff64538e,0xff7462b0,0xff64538e,0xff41454d,0xff4b505b};return juce::Colour(c[juce::jlimit(0,liberty::modelCount-1,m)]);}
- static const char* family(int m){constexpr const char* f[]={"FET","OPTO","VCA","VCA","VARI-MU","DIODE","OPTO","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","DIGITAL","DIGITAL","DUAL BAND","DUAL BAND","DUAL BAND","DUAL BAND","DIGITAL","DIGITAL"};return f[m];}
+ static juce::Colour color(int m){constexpr unsigned c[]={0xff8d2638,0xff655e50,0xff58616b,0xff536677,0xff643654,0xff286054,0xff756956,0xff41454d,0xff8d2638,0xff763344,0xff6c6352,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff8d2638,0xff763344,0xff655e50,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff41454d,0xff4b505b,0xff64538e,0xff64538e,0xff7462b0,0xff64538e,0xff41454d,0xff4b505b,0xff8d2638,0xff763344,0xff655e50,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xffaa6039,0xff94582f,0xff64538e,0xff64538e,0xff7462b0,0xff64538e,0xff59498b,0xff6857a5,0xff59498b,0xff7462b0};return juce::Colour(c[juce::jlimit(0,liberty::modelCount-1,m)]);}
+ static const char* family(int m){constexpr const char* f[]={"FET","OPTO","VCA","VCA","VARI-MU","DIODE","OPTO","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","DIGITAL","DIGITAL","DUAL BAND","DUAL BAND","DUAL BAND","DUAL BAND","DIGITAL","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","PWM-INSPIRED","PWM-INSPIRED","MULTIBAND","MULTIBAND","MULTIBAND","MULTIBAND","SPECTRAL","SPECTRAL","SPECTRAL","SPECTRAL"};return f[m];}
  void drawLabel(juce::Graphics& g,const juce::String& s,R r,float size,juce::Colour colour,bool serif=false,juce::Justification alignment=juce::Justification::centredLeft,bool bold=false){
   g.setColour(colour);auto name=serif?juce::Font::getDefaultSerifFontName():juce::Font::getDefaultSansSerifFontName();
   g.setFont(juce::Font(juce::FontOptions(name,size,bold?juce::Font::bold:juce::Font::plain)));g.drawFittedText(s,r.toNearestInt(),alignment,1,.8f);
@@ -117,20 +117,20 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"TITANIUM RED  /  v0.3.0",R{108,86,500,20},15,muted);
+  drawLabel(g,"TITANIUM RED  /  v0.4.0",R{108,86,500,20},15,muted);
   button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
   button(g,R{1290,32,100,48},viewB?"A / [B]":"[A] / B",[this]{toggleAB();},false,viewB);
   button(g,R{1402,32,157,48},french?u("Français"):"English",[this]{french=!french;},false,false);
-  button(g,R{1128,32,151,48},"PRESETS 200",[this]{presetPage=0;screen=Screen::Presets;},false,screen==Screen::Presets);
+  button(g,R{1128,32,151,48},"PRESETS 400",[this]{presetPage=0;screen=Screen::Presets;},false,screen==Screen::Presets);
   if(p.learnTarget.load()>=0)drawLabel(g,tr("MIDI LEARN : bougez un CC","MIDI LEARN: move a CC"),R{710,83,650,28},18,amber,false,juce::Justification::centred);
   line(g,20,118,1580,118,goldDark,1.5f);
  }
  void board(juce::Graphics& g){
   using namespace clskin;surface(g,R{28,139,1544,641},navySoft,midnight,18.f,goldDark);
   drawLabel(g,tr("COLLECTION LIBERTY","LIBERTY COLLECTION"),R{65,146,310,27},19,cream,false,juce::Justification::centredLeft,true);
-  drawLabel(g,tr("40 PROFILS EXPÉRIMENTAUX","40 EXPERIMENTAL PROFILES"),R{390,146,440,27},17,muted);
+  drawLabel(g,tr("60 PROFILS EXPÉRIMENTAUX","60 EXPERIMENTAL PROFILES"),R{390,146,440,27},17,muted);
   bool par=p.state.getRawParameterValue("parallel")->load()>.5f;
   drawLabel(g,par?"IN > SPLIT A/B > MIX > OUT":"IN > 1 > 2 > 3 > 4 > 5 > 6 > 7 > 8 > OUT",R{860,146,675,27},16,cream,false,juce::Justification::centredRight,true);
   std::array<R,8> boxes;for(int i=0;i<8;++i)boxes[i]=R{56.f+(i%4)*381.f,177.f+(i/4)*294.f,355.f,281.f};
@@ -170,20 +170,21 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   button(g,R{130,642,392,45},raw(selected,"external")>.5f?"SIDECHAIN EXT":"SIDECHAIN INT",[this]{setRaw(selected,"external",raw(selected,"external")>.5f?0.f:1.f);},false,raw(selected,"external")>.5f);
   drawLabel(g,p.sidechainAvailable.load()?tr("Entrée externe active","External input active"):tr("Sans entrée externe : détection interne","No external input: internal detection"),R{130,692,392,35},16,muted);
   button(g,R{130,742,392,45},tr("COURBES & ANALYSE","CURVES & ANALYSIS"),[this]{screen=Screen::Analysis;});
-  drawLabel(g,tr("Clic droit sur un potentiomètre : MIDI Learn.","Right-click a knob: MIDI Learn."),R{120,805,1360,45},19,muted,false,juce::Justification::centred);
+  button(g,R{580,805,440,45},tr("TRAITEMENTS AVANCÉS","ADVANCED PROCESSING"),[this]{screen=Screen::Advanced;});
+  drawLabel(g,tr("Clic droit : MIDI Learn","Right-click: MIDI Learn"),R{1050,805,420,45},18,muted,false,juce::Justification::centred);
  }
  void library(juce::Graphics& g){
   using namespace clskin;panel(g,tr("BIBLIOTHÈQUE DE COMPRESSEURS","COMPRESSOR LIBRARY")+"  /  "+juce::String(selected+1));
   for(int j=0;j<8;++j){int i=libraryPage*8+j;if(i>=liberty::modelCount)break;R b{115.f+(j%4)*350,239.f+(j/4)*273,330,262};surface(g,b,navy,midnight,9.f,goldDark);enclosure(g,R{b.getX()+16,b.getY()+8,298,196},-1,i,true);button(g,R{b.getX()+30,b.getBottom()-47,270,35},tr("CHARGER","LOAD"),[this,i]{setRaw(selected,"model",float(i));setRaw(selected,"on",1);screen=Screen::Detail;});}
-  for(int t=0;t<5;++t)button(g,R{530.f+t*110,825,95,43},juce::String(t+1)+" / 5",[this,t]{libraryPage=t;},false,libraryPage==t);
+  for(int t=0;t<8;++t)button(g,R{360.f+t*110,825,95,43},juce::String(t+1)+" / 8",[this,t]{libraryPage=t;},false,libraryPage==t);
  }
- juce::String presetName(int i)const{return juce::String(liberty::categories[size_t((i%100)/10)].prefix)+" - "+liberty::variants[size_t(i%10)]+(i>=100?" XL":"");}
+ juce::String presetName(int i)const{return juce::String(liberty::categories[size_t((i%100)/10)].prefix)+" - "+liberty::variants[size_t(i%10)]+(i>=300?" Ultimate Pro":i>=200?" Ultimate":i>=100?" XL":"");}
  static juce::File favoritesFile(){return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Liberty Music Software").getChildFile("Compresseur Legends").getChildFile("favorites.txt");}
  void readFavorites(){auto file=favoritesFile();if(!file.existsAsFile())return;auto s=file.loadFileAsString();for(int i=0;i<liberty::factoryCount;++i)favorites[size_t(i)]=i<s.length()&&s[i]=='1';}
  void toggleFavorite(int i){readFavorites();favorites[size_t(i)]=!favorites[size_t(i)];juce::String s;for(bool fav:favorites)s+=fav?"1":"0";auto file=favoritesFile();if(file.getParentDirectory().createDirectory().wasOk())file.replaceWithText(s);}
  void syncSearch(){presetSearch.setVisible(screen==Screen::Presets);presetSearch.setTextToShowWhenEmpty(tr("Rechercher un preset...","Search presets..."),clskin::muted);}
  void presets(juce::Graphics& g){
-  using namespace clskin;panel(g,tr("PRESETS D'USINE","FACTORY PRESETS")+"  /  200");
+  using namespace clskin;panel(g,tr("PRESETS D'USINE","FACTORY PRESETS")+"  /  400");
   button(g,R{114,245,242,40},tr("TOUS","ALL"),[this]{presetCategory=-1;presetPage=0;},false,presetCategory<0);
   for(int c=0;c<liberty::categoryCount;++c){const auto& cat=liberty::categories[size_t(c)];button(g,R{114,293.f+c*43,242,37},u(french?cat.fr:cat.en),[this,c]{presetCategory=c;presetPage=0;},false,presetCategory==c);}
   button(g,R{114,742,242,43},tr("FAVORIS","FAVORITES"),[this]{onlyFavorites=!onlyFavorites;presetPage=0;},false,onlyFavorites);
@@ -211,7 +212,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   const int m=model(selected);const auto& entry=clhistory::entries[size_t(m)];
   enclosure(g,R{120,251,430,250},selected,m,false);
   drawLabel(g,tr("REPÈRES HISTORIQUES","HISTORICAL LANDMARKS"),R{127,517,416,27},19,muted,false,juce::Justification::centred,true);
-  drawLabel(g,(m==7||m==18||m==19||m>=30)?tr("ÈRE NUMÉRIQUE","DIGITAL ERA"):u(entry.era),R{127,550,416,46},32,cream,true,juce::Justification::centred);
+  drawLabel(g,(m==7||m==18||m==19||(m>=30&&m<40)||m>=50)?tr("ÈRE NUMÉRIQUE","DIGITAL ERA"):u(entry.era),R{127,550,416,46},32,cream,true,juce::Justification::centred);
   drawLabel(g,u(entry.reference),R{127,607,416,38},20,cream,false,juce::Justification::centred,true);
   drawLabel(g,tr("Référence de famille, pas une copie","Family reference, not a clone"),R{127,650,416,27},17,muted,false,juce::Justification::centred);
   button(g,R{125,709,420,48},tr("ÉDITER LE COMPRESSEUR","EDIT COMPRESSOR"),[this]{screen=Screen::Detail;});
@@ -237,6 +238,22 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   button(g,R{435,248,290,50},tr("PARALLÈLE A/B","PARALLEL A/B"),[this]{set(p.state.getParameter("parallel"),1);},false,par);
   for(int i=0;i<8;++i){R r{160.f+(par?i%4:i)*155.f,par?360.f+(i/4)*190.f:430.f,135,120};surface(g,r,color(model(i)),midnight,8.f,goldDark);drawLabel(g,juce::String(i+1)+" / "+family(model(i)),r.reduced(9),20,cream,false,juce::Justification::centred,true);if(i!=7&&(!par||i!=3))line(g,r.getRight(),r.getCentreY(),r.getRight()+20,r.getCentreY(),gold,4);}
   auto* a=p.state.getParameter("balance");knobDraw(g,820,739,36,a->getValue(),"BALANCE A/B",juce::String(int(a->getValue()*100))+" % B",true,a);
+ }
+ void advanced(juce::Graphics& g){
+  using namespace clskin;panel(g,tr("TRAITEMENTS AVANCÉS","ADVANCED PROCESSING")+" / "+juce::String(selected+1));
+  button(g,R{125,235,210,42},tr("ÉDITER","EDIT"),[this]{screen=Screen::Detail;});
+  drawLabel(g,tr("TRAITEMENT DU SLOT","SLOT PROCESSING"),R{140,310,620,40},26,cream,true);
+  const char* modes[]={"STEREO","MID","SIDE"};
+  for(int i=0;i<3;++i)button(g,R{140.f+i*205,366,192,60},modes[i],[this,i]{setRaw(selected,"stereo",float(i));},false,int(raw(selected,"stereo"))==i);
+  button(g,R{140,455,295,58},"AUTO GAIN",[this]{setRaw(selected,"auto",raw(selected,"auto")>.5f?0:1);},false,raw(selected,"auto")>.5f);
+  button(g,R{450,455,295,58},"DELTA",[this]{setRaw(selected,"delta",raw(selected,"delta")>.5f?0:1);},false,raw(selected,"delta")>.5f);
+  drawLabel(g,tr("Mid ou Side : l'autre composante reste intacte hors Auto Gain.","Mid or Side: other component unchanged except Auto Gain."),R{140,540,605,60},19,muted);
+  drawLabel(g,tr("QUALITÉ GLOBALE DU RACK","GLOBAL RACK QUALITY"),R{825,310,600,40},26,cream,true);
+  auto* q=p.state.getParameter("quality");for(int i=0;i<5;++i)button(g,R{825.f+i*120,366,108,60},juce::String(1<<i)+"x",[this,i]{auto* a=p.state.getParameter("quality");set(a,a->convertTo0to1(float(i)));},false,int(q->convertFrom0to1(q->getValue()))==i);
+  auto* a=p.state.getParameter("lookahead");knobDraw(g,1000,535,43,a->getValue(),"LOOKAHEAD / SLOT",juce::String(a->convertFrom0to1(a->getValue()),1)+" ms",true,a);
+  drawLabel(g,tr("Latence déclarée à l'hôte","Reported host latency"),R{1155,480,275,40},19,muted);
+  drawLabel(g,juce::String(p.getLatencySamples())+" samples",R{1155,528,275,50},26,cream,true);
+  drawLabel(g,tr("Modifier qualité, lookahead ou modèle spectral à l'arrêt. Latence cumulée sur huit slots, même en parallèle.","Change quality, lookahead or spectral model while stopped. Latency is aligned over eight slots, including parallel routing."),R{140,760,1290,65},20,muted,false,juce::Justification::centred);
  }
  void analysis(juce::Graphics& g){
   using namespace clskin;panel(g,tr("ANALYSE DE LA COMPRESSION","COMPRESSION ANALYSIS")+"  /  "+juce::String(selected+1));
@@ -279,7 +296,7 @@ public:
  }
  ~Editor()override{stopTimer();if(dragging)dragging->endChangeGesture();}
  void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;presetSearch.setBounds(juce::Rectangle<float>{382,245,1090,43}.transformedBy(juce::AffineTransform::scale(scale).translated(xOffset,yOffset)).toNearestInt());presetSearch.setFont(juce::Font(juce::FontOptions(20.f*scale)));}
- void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;}}
+ void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;case Screen::Advanced:advanced(g);break;}}
  void mouseDown(const juce::MouseEvent& e)override{auto pt=logical(e.position);if(e.mods.isPopupMenu()){for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)&&it->param){int idx=p.midiIndex(it->param);if(idx<0)return;juce::PopupMenu menu;menu.addItem(1,"MIDI Learn");menu.addItem(2,tr("Effacer l'affectation","Clear mapping"),p.midiCC[idx].load()>=0);menu.addItem(3,tr("Annuler l'apprentissage","Cancel learn"),p.learnTarget.load()>=0);auto safe=juce::Component::SafePointer<Editor>(this);menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),[safe,idx](int choice){if(safe==nullptr)return;if(choice==1)safe->p.learnTarget.store(idx);if(choice==2)safe->p.midiCC[idx].store(-1);if(choice==3)safe->p.learnTarget.store(-1);safe->repaint();});return;}return;}if(!e.mods.isLeftButtonDown())return;for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param){dragging=it->param;startValue=dragging->getValue();startY=pt.y;dragging->beginChangeGesture();}else if(it->click){auto f=it->click;f();syncSearch();}repaint();return;}}
  void mouseDrag(const juce::MouseEvent& e)override{if(dragging){dragging->setValueNotifyingHost(juce::jlimit(0.f,1.f,startValue+(startY-logical(e.position).y)/160.f));repaint();}}
  void mouseUp(const juce::MouseEvent&)override{if(dragging){dragging->endChangeGesture();dragging=nullptr;}}
