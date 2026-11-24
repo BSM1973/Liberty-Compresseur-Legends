@@ -162,11 +162,11 @@ class Slot{
  Spectral spectral; ProSpectral proSpectral;ProMulti proMulti;ProEQ proEQ;SampleDelay signalDelay,dryDelay,proMonitorDelay;bool lastPro=false;int lastProSize=0,lastProCount=0;
  float inPower=0,outPower=0,autoDb=0;
  int lastModel=-1;bool wasEnabled=false,lastAnalog=false;
- CharacterDC dcL,dcR;float dcPole=.999f;
+ CharacterDC dcL,dcR;float dcPole=.999f,rmsCoefficient=0,dualSplit=0,autoCoefficient=0;float legacyCross[2][3]{};
  float cachedAttack=-1,cachedRelease=-1,cachedRate=-1,cachedA=0,cachedR=0,cachedSlow=0,cachedRms=0;
  static float coefficient(float ms,float sr){return std::exp(-1000.f/(std::max(.05f,ms)*sr));}
 public:
- void prepare(float rate){sr=std::max(1.f,rate);dcPole=std::exp(-6.283185307f*5.f/sr);signalDelay.prepare(int(sr*.01f)+4096+8);dryDelay.prepare(int(sr*.01f)+4096+8);proMonitorDelay.prepare(4096);spectral.prepare();proSpectral.prepare();reset();}
+ void prepare(float rate){sr=std::max(1.f,rate);dcPole=std::exp(-6.283185307f*5.f/sr);rmsCoefficient=coefficient(15.f,sr);dualSplit=1.f-std::exp(-6.283185307f*220.f/sr);autoCoefficient=1-std::exp(-1.f/(.4f*sr));const float hz[2][3]={{180,2500,0},{120,600,3500}};for(int a=0;a<2;++a)for(int b=0;b<3;++b)legacyCross[a][b]=1-std::exp(-6.283185307f*hz[a][b]/sr);signalDelay.prepare(int(sr*.01f)+4096+8);dryDelay.prepare(int(sr*.01f)+4096+8);proMonitorDelay.prepare(4096);spectral.prepare();proSpectral.prepare();reset();}
  void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;lastAnalog=false;dcL.reset();dcR.reset();proSpectral.reset();proMulti.reset();proEQ.reset();proMonitorDelay.reset();lastPro=false;lastProSize=lastProCount=0;}
  float gr()const{return applied;}
  float detectorLevel()const{return lastDetector;}
@@ -187,19 +187,19 @@ public:
   if(m.architecture==7||m.architecture==8){
    int bands=m.architecture==7?3:4;const float hz3[]={180,2500,0},hz4[]={120,600,3500};const float* hz=bands==3?hz3:hz4;
    float al[4]{},ar[4]{},bl[4]{},br[4]{},lastL=0,lastR=0,lastDL=0,lastDR=0;
-   for(int i=0;i<bands-1;++i){float c=1-std::exp(-6.283185307f*hz[i]/sr);splitL[i]+=c*(l-splitL[i]);splitR[i]+=c*(r-splitR[i]);splitDL[i]+=c*(dl-splitDL[i]);splitDR[i]+=c*(dr-splitDR[i]);al[i]=splitL[i]-lastL;ar[i]=splitR[i]-lastR;bl[i]=splitDL[i]-lastDL;br[i]=splitDR[i]-lastDR;lastL=splitL[i];lastR=splitR[i];lastDL=splitDL[i];lastDR=splitDR[i];}
+   for(int i=0;i<bands-1;++i){float c=legacyCross[bands-3][i];splitL[i]+=c*(l-splitL[i]);splitR[i]+=c*(r-splitR[i]);splitDL[i]+=c*(dl-splitDL[i]);splitDR[i]+=c*(dr-splitDR[i]);al[i]=splitL[i]-lastL;ar[i]=splitR[i]-lastR;bl[i]=splitDL[i]-lastDL;br[i]=splitDR[i]-lastDR;lastL=splitL[i];lastR=splitR[i];lastDL=splitDL[i];lastDR=splitDR[i];}
    al[bands-1]=l-lastL;ar[bands-1]=r-lastR;bl[bands-1]=dl-lastDL;br[bands-1]=dr-lastDR;
    applied=lastDetector=0;float outL=0,outR=0;
-   float rmsC=coefficient(15,sr),at=coefficient(p.attack*m.attackScale,sr),rel=coefficient(p.release*m.releaseScale,sr);
+   float rmsC=rmsCoefficient,at=coefficient(p.attack*m.attackScale,sr),rel=coefficient(p.release*m.releaseScale,sr);
    for(int i=0;i<bands;++i){float peak=std::max(std::abs(bl[i]),std::abs(br[i]));lastDetector=std::max(lastDetector,peak);bandPower[i]=rmsC*bandPower[i]+(1-rmsC)*peak*peak;float level=(1-m.rms)*peak+m.rms*std::sqrt(std::max(0.f,bandPower[i]));float target=reduction(db(level)-p.threshold,p.ratio,m.knee);float c=target>bandEnv[i]?at:rel;bandEnv[i]=c*bandEnv[i]+(1-c)*target;applied=std::max(applied,bandEnv[i]);float g=gain(p.makeup-bandEnv[i]);outL+=al[i]*g;outR+=ar[i]*g;}
    l+=(outL-l)*p.mix;r+=(outR-r)*p.mix;return;
   }
   if(m.architecture==5){
-   const float split=1.f-std::exp(-6.283185307f*220.f/sr);
+   const float split=dualSplit;
    lowL+=split*(l-lowL);lowR+=split*(r-lowR);detLowL+=split*(dl-detLowL);detLowR+=split*(dr-detLowR);
    const float peaks[]={std::max(std::abs(detLowL),std::abs(detLowR)),std::max(std::abs(dl-detLowL),std::abs(dr-detLowR))};
    float g[2]{};lastDetector=std::max(peaks[0],peaks[1]);
-   const float rmsC=coefficient(15.f,sr);
+   const float rmsC=rmsCoefficient;
    for(int b=0;b<2;++b){
     bandPower[b]=rmsC*bandPower[b]+(1-rmsC)*peaks[b]*peaks[b];
     float level=(1-m.rms)*peaks[b]+m.rms*std::sqrt(std::max(0.f,bandPower[b]));
@@ -220,7 +220,7 @@ public:
   }
   lastDetector=peak;
   const float detector=(m.feedback&&!external)?peak*gain(-previous):peak;
-  const float rmsC=coefficient(15.f,sr);
+  const float rmsC=rmsCoefficient;
   power=rmsC*power+(1-rmsC)*detector*detector;
   float level=(1.f-m.rms)*detector+m.rms*std::sqrt(std::max(0.f,power));
   if(m.architecture==2){const float rms=std::sqrt(std::max(0.f,power));level*=1.f+.35f*std::clamp(detector/std::max(.001f,rms)-1.f,0.f,3.f);}
@@ -268,7 +268,7 @@ public:
   core(l,r,wet,detectorL,detectorR,useDetector);
   if(stereoMode){float z=.5f*(l+r);if(stereoMode==1){l=z+keep;r=z-keep;}else{l=keep+z;r=keep-z;}}
   if(monitoring)return;
-  if(p.autoGain){float c=1-std::exp(-1.f/(.4f*sr));inPower+=c*(.5f*(dryL*dryL+dryR*dryR)-inPower);outPower+=c*(.5f*(l*l+r*r)-outPower);
+  if(p.autoGain){float c=autoCoefficient;inPower+=c*(.5f*(dryL*dryL+dryR*dryR)-inPower);outPower+=c*(.5f*(l*l+r*r)-outPower);
    float target=inPower>1e-7f&&outPower>1e-9f?std::clamp(10.f*std::log10(inPower/outPower),-12.f,12.f):0;autoDb+=c*(target-autoDb);float g=gain(autoDb);l*=g;r*=g;}
   l=dryL+(l-dryL)*p.mix;r=dryR+(r-dryR)*p.mix;if(p.delta){l=dryL-l;r=dryR-r;}
  }
@@ -280,7 +280,7 @@ public:
  std::array<Parameters,8> params{};std::array<bool,8> external{};bool parallel=false;float balance=.5f;std::array<BranchControls,4> branchControls{};
  void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+4096+8));for(auto& d:branchDelays)d.prepare(8*(int(sampleRate*.01f)+4096+8));routeSmoothing=1-std::exp(-1.f/(.01f*std::max(1.f,sampleRate)));gainsReady=false;}
  void reset(){for(auto& s:slots)s.reset();parallelDelay.reset();for(auto& d:branchDelays)d.reset();gainsReady=false;}
- void configureRouting(const RoutePlan& next,const std::array<BranchControls,4>& controls){branchControls=controls;if(!plan.sameTopology(next)){plan=next;counts=plan.counts();ordered=plan.ordered();longest=*std::max_element(counts.begin(),counts.end());populated=int(std::count_if(counts.begin(),counts.end(),[](int n){return n>0;}));reset();}bool solo=false;for(int b=0;b<4;++b)solo|=counts[b]>0&&controls[b].solo;for(int b=0;b<4;++b){targetGain[b]=routeGain(controls[b],counts[b]>0&&!controls[b].mute&&(!solo||controls[b].solo),populated);if(!gainsReady)currentGain[b]=targetGain[b];}gainsReady=true;}
+ void configureRouting(const RoutePlan& next,const std::array<BranchControls,4>& controls){branchControls=controls;if(!plan.sameTopology(next)){bool resetNeeded=plan.enabled||next.enabled;plan=next;counts=plan.counts();ordered=plan.ordered();longest=*std::max_element(counts.begin(),counts.end());populated=int(std::count_if(counts.begin(),counts.end(),[](int n){return n>0;}));if(resetNeeded)reset();}bool solo=false;for(int b=0;b<4;++b)solo|=counts[b]>0&&controls[b].solo;for(int b=0;b<4;++b){targetGain[b]=routeGain(controls[b],counts[b]>0&&!controls[b].mute&&(!solo||controls[b].solo),populated);if(!gainsReady)currentGain[b]=targetGain[b];}gainsReady=true;}
  void configureLatency(int la,bool spectral,int maxFFT=Spectral::N){int pad=spectral?std::clamp(maxFFT,Spectral::N,4096):0;if(la!=lookahead||pad!=spectralPad){lookahead=la;spectralPad=pad;reset();}}
  int latency()const{return (plan.enabled?longest:8)*(lookahead+spectralPad);}
  float gr(size_t i)const{return slots.at(i).gr();}

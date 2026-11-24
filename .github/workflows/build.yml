@@ -1,4 +1,4 @@
-name: Compresseur Legends v0.8.0
+name: Compresseur Legends v0.9.0
 on: [workflow_dispatch, push]
 jobs:
   build:
@@ -9,6 +9,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Configure macOS ARM64
         if: runner.os == 'macOS'
         run: cmake -S . -B build -DBUILD_PLUGIN=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
@@ -17,25 +20,38 @@ jobs:
         run: cmake -S . -B build -A x64 -DBUILD_PLUGIN=ON
       - name: Build
         run: cmake --build build --config Release --parallel 2
-      - name: DSP tests
+      - name: UTF-8 source check
+        run: python tests/utf8_check.py
+      - name: DSP and processor quality control
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Compresseur-Legends-v0.9.0-QC-${{ matrix.os }}
+          path: |
+            build/qc/*.csv
+            build/Testing/Temporary/LastTest.log
+            docs/MANUEL-FR.md
+            docs/VALIDATION.md
+          if-no-files-found: warn
       - name: Package macOS bundles
         if: runner.os == 'macOS'
         run: |
           cd build/CompresseurLegends_artefacts/Release
           test -d AU && test -d VST3 && test -d Standalone
-          tar -czf ../../../Compresseur-Legends-v0.8.0-macOS-arm64.tar.gz AU VST3 Standalone
+          tar -czf ../../../Compresseur-Legends-v0.9.0-macOS-arm64.tar.gz AU VST3 Standalone
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Set-Location build/CompresseurLegends_artefacts/Release
           if (!(Test-Path VST3) -or !(Test-Path Standalone)) { throw "Missing plugin outputs" }
-          Compress-Archive -Path VST3,Standalone -DestinationPath ../../../Compresseur-Legends-v0.8.0-Windows-x64.zip
+          Compress-Archive -Path VST3,Standalone -DestinationPath ../../../Compresseur-Legends-v0.9.0-Windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: Compresseur-Legends-v0.8.0-${{ matrix.os }}
+          name: Compresseur-Legends-v0.9.0-${{ matrix.os }}
           path: |
-            Compresseur-Legends-v0.8.0-*.zip
-            Compresseur-Legends-v0.8.0-*.tar.gz
+            Compresseur-Legends-v0.9.0-*.zip
+            Compresseur-Legends-v0.9.0-*.tar.gz
           if-no-files-found: error

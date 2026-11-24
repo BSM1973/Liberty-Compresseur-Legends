@@ -39,3 +39,6 @@ Correct telemetry frame publication at the end of processBlock; publish complete
 
 ## v0.8.0 Routing Designer & Preset Lab (experimental)
 Four parallel lanes with each of 8 slots assigned exactly once; drag/drop and serial order per lane, gain/pan/solo/mute/polarity, 10 ms gain smoothing, normalized by populated branches (empty lanes excluded), compensation to longest branch. Topology changes reset DSP, edit stopped. Existing series and A/B modes unchanged. Preset Lab stores local versioned .clpreset XML files, name/category/tags, search, import/export with validation, session-local 32-step editor undo/redo, gentle/intense heuristic variations, manual four-second A/B RMS comparison (same passage, temporary B trim ±12 dB). Factory presets remain unchanged, reset Designer to legacy. History does not capture DAW automation or MIDI; level match is not perceptual loudness, not persistent. Host and visual validation pending.
+
+## v0.9.0 Professional Quality Control
+Fixed coefficient caching, sorted crossover cache, FIR true-peak estimate, guarded project state restore. CI adds CSV measurements, 60-second simulated rack runs, full processor state and oversampling smoke tests, encoding scan and manual validation plan. See docs/MANUEL-FR.md and docs/VALIDATION.md. Listening, host PDC, visual and full BS.1770 compliance pending.

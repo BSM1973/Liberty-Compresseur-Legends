@@ -24,12 +24,12 @@ struct ProEQ{
  float process(float x,int ch){hpState[ch]+=hpc*(x-hpState[ch]);if(lastHP>20)x-=hpState[ch];lpState[ch]+=lpc*(x-lpState[ch]);if(lastLP<20000)x=lpState[ch];if(lastG==0)return x;float y=b0*x+z1[ch];z1[ch]=b1*x-a1*y+z2[ch];z2[ch]=b2*x-a2*y;return y;}
 };
 class ProMulti{
- float lp[4][5][2]{},env[2][6]{},crossC[5]{},at[6]{},rel[6]{},lastA[6]{},lastR[6]{},lastX[5]{},lastSR=-1,gr=0,det=0;std::array<float,6> meters{};
+ float lp[4][5][2]{},env[2][6]{},crossC[5]{},at[6]{},rel[6]{},lastA[6]{},lastR[6]{},lastX[5]{},lastSR=-1,gr=0,det=0;std::array<float,6> meters{};std::array<float,5> cachedCross{},rawCross{};int lastCount=-1;
 public:
- void reset(){for(auto& ch:lp)for(auto& b:ch)for(auto& z:b)z=0;for(auto& ch:env)for(auto& z:ch)z=0;meters.fill(0);gr=det=0;lastSR=-1;}
+ void reset(){for(auto& ch:lp)for(auto& b:ch)for(auto& z:b)z=0;for(auto& ch:env)for(auto& z:ch)z=0;meters.fill(0);gr=det=0;lastSR=-1;lastCount=-1;}
  float reduction()const{return gr;}float detector()const{return det;}float meter(int i)const{return i>=0&&i<6?meters[i]:0;}
  void process(float& l,float& r,float dl,float dr,const ProSettings& p,float sr,float knee,float makeup,float attackScale,float releaseScale){
-  int n=proCount(p);auto cross=proCross(p,sr);bool change=lastSR!=sr;
+  int n=proCount(p);bool change=lastSR!=sr;if(change||lastCount!=n||rawCross!=p.cross){cachedCross=proCross(p,sr);rawCross=p.cross;lastCount=n;}const auto& cross=cachedCross;
   for(int i=0;i<n-1;++i)if(change||lastX[i]!=cross[i]){lastX[i]=cross[i];crossC[i]=1-std::exp(-6.283185307f*cross[i]/sr);}
   for(int i=0;i<n;++i){float a=p.bands[i].attack*attackScale,b=p.bands[i].release*releaseScale;if(change||lastA[i]!=a||lastR[i]!=b){lastA[i]=a;lastR[i]=b;at[i]=std::exp(-1000/(std::max(.05f,a)*sr));rel[i]=std::exp(-1000/(std::max(.05f,b)*sr));}}
   lastSR=sr;float x[4]={l,r,dl,dr},out[4][6]{};for(int c=0;c<4;++c){float prev=0;for(int i=0;i<n-1;++i){auto& z=lp[c][i];z[0]+=crossC[i]*(x[c]-z[0]);z[1]+=crossC[i]*(z[0]-z[1]);out[c][i]=z[1]-prev;prev=z[1];}out[c][n-1]=x[c]-prev;}

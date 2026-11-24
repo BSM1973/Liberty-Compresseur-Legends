@@ -1,5 +1,6 @@
 #pragma once
 #include "Dynamics.h"
+#include "TruePeak.h"
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -62,20 +63,20 @@ class AudioTelemetry{
  static constexpr int N=4096;
  struct Frame{std::atomic<float> inL{0},inR{0},outL{0},outR{0};};
  std::array<Frame,N> ring{};std::atomic<uint64_t> head{0},sequence{0};uint64_t write=0;
- MeterBiquad shelf[2][2],hp[2][2];double energy[2]{},square[2]{},corrL=0,corrR=0,corrLR=0;float peak[2]{},prev[2][2][4]{};
+ MeterBiquad shelf[2][2],hp[2][2];double energy[2]{},square[2]{},corrL=0,corrR=0,corrLR=0;float peak[2]{};TruePeakFIR tp[2][2];
  std::array<std::array<double,30>,2> buckets{};int pos=0,filled=0,count=0,window=4800;float rate=48000;bool active=false;int channels=2;
  FeatureCapture feature;bool capturing=false;
  static float cubic(float a,float b,float c,float d,float t){return b+.5f*t*(c-a+t*(2*a-5*b+4*c-d+t*(3*(b-c)+d-a)));}
- void clearMeter(){for(int k=0;k<2;++k){energy[k]=square[k]=0;peak[k]=0;buckets[k].fill(0);for(int c=0;c<2;++c){shelf[k][c].clear();hp[k][c].clear();for(float& x:prev[k][c])x=0;}}pos=filled=count=0;corrL=corrR=corrLR=0;write=0;head.store(0);for(int k=0;k<2;++k){rms[k].store(-180);truePeak[k].store(-180);momentary[k].store(-180);shortTerm[k].store(-180);}correlation.store(0);meterReady.store(false);shortReady.store(false);}
+ void clearMeter(){for(int k=0;k<2;++k){energy[k]=square[k]=0;peak[k]=0;buckets[k].fill(0);for(int c=0;c<2;++c){shelf[k][c].clear();hp[k][c].clear();tp[k][c].reset();}}pos=filled=count=0;corrL=corrR=corrLR=0;write=0;head.store(0);for(int k=0;k<2;++k){rms[k].store(-180);truePeak[k].store(-180);momentary[k].store(-180);shortTerm[k].store(-180);}correlation.store(0);meterReady.store(false);shortReady.store(false);}
 public:
  std::atomic<bool> enabled{false},request{false},cancel{false},meterReady{false},shortReady{false};
  std::atomic<int> progress{-1};std::array<std::atomic<float>,2> rms{},truePeak{},momentary{},shortTerm{};std::atomic<float> correlation{0},capturePeak{-180},captureRms{-180},captureCrest{0},captureLow{0},captureHigh{0},sampleRate{48000};
- void prepare(float sr){rate=std::max(8000.f,sr);sampleRate.store(rate);window=std::max(1,int(rate*.1f));for(int k=0;k<2;++k)for(int c=0;c<2;++c){shelf[k][c].shelf(rate);hp[k][c].highpass(rate);}clearMeter();active=false;capturing=false;request.store(false);cancel.store(false);progress.store(-1);}
+ void prepare(float sr){rate=std::max(8000.f,sr);sampleRate.store(rate);window=std::max(1,int(rate*.1f));for(int k=0;k<2;++k)for(int c=0;c<2;++c){shelf[k][c].shelf(rate);hp[k][c].highpass(rate);tp[k][c].prepare();}clearMeter();active=false;capturing=false;request.store(false);cancel.store(false);progress.store(-1);}
  bool begin(int channelCount){if(cancel.exchange(false)){capturing=false;progress.store(-1);}if(request.exchange(false)){feature.reset(rate);capturing=true;progress.store(0);}bool now=enabled.load();if(now){sequence.fetch_add(1,std::memory_order_acq_rel);if(!active||channels!=channelCount)clearMeter();}active=now;channels=channelCount;return now;}
  void input(float l,float r){if(!capturing)return;bool done=feature.push(l,r);if(!done)progress.store(feature.progress(),std::memory_order_relaxed);if(done){auto f=feature.result();capturePeak.store(f.peak);captureRms.store(f.rms);captureCrest.store(f.crest);captureLow.store(f.low);captureHigh.store(f.high);capturing=false;progress.store(100,std::memory_order_release);}}
  SignalFeatures features()const{return {capturePeak.load(),captureRms.load(),captureCrest.load(),captureLow.load(),captureHigh.load()};}
  void sample(float il,float ir,float ol,float orr){if(!active)return;auto& frame=ring[write%N];frame.inL.store(il,std::memory_order_relaxed);frame.inR.store(ir,std::memory_order_relaxed);frame.outL.store(ol,std::memory_order_relaxed);frame.outR.store(orr,std::memory_order_relaxed);++write;
-  float x[2][2]={{il,ir},{ol,orr}};for(int k=0;k<2;++k)for(int c=0;c<channels;++c){float v=x[k][c];square[k]+=double(v)*v/channels;float y=hp[k][c].tick(shelf[k][c].tick(v));energy[k]+=double(y)*y;auto& t=prev[k][c];t[0]=t[1];t[1]=t[2];t[2]=t[3];t[3]=v;peak[k]=std::max(peak[k],std::abs(v));for(int j=1;j<4;++j)peak[k]=std::max(peak[k],std::abs(cubic(t[0],t[1],t[2],t[3],j*.25f)));}
+  float x[2][2]={{il,ir},{ol,orr}};for(int k=0;k<2;++k)for(int c=0;c<channels;++c){float v=x[k][c];square[k]+=double(v)*v/channels;float y=hp[k][c].tick(shelf[k][c].tick(v));energy[k]+=double(y)*y;peak[k]=std::max(peak[k],tp[k][c].process(v));}
   corrL+=double(ol)*ol;corrR+=double(orr)*orr;corrLR+=double(ol)*orr;
   if(++count>=window){filled=std::min(30,filled+1);for(int k=0;k<2;++k){buckets[k][pos]=energy[k]/count;double m=0,s=0;for(int i=0;i<filled;++i){double e=buckets[k][(pos+30-i)%30];s+=e;if(i<4)m+=e;}rms[k].store(db(float(std::sqrt(square[k]/count))));truePeak[k].store(db(peak[k]));momentary[k].store(float(-.691+10*std::log10(std::max(1e-18,m/std::min(4,filled)))));shortTerm[k].store(float(-.691+10*std::log10(std::max(1e-18,s/filled))));energy[k]=square[k]=0;peak[k]=0;}
    correlation.store(float(std::clamp(corrLR/std::sqrt(std::max(1e-24,corrL*corrR)),-1.,1.)));corrL=corrR=corrLR=0;pos=(pos+1)%30;count=0;meterReady.store(filled>=4);shortReady.store(filled>=30);}

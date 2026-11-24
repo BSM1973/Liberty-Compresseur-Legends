@@ -3,6 +3,7 @@
 #include "Dynamics.h"
 #include "FactoryPresets.h"
 #include "Intelligence.h"
+#include <cstdlib>
 class Processor final: public juce::AudioProcessor {
 public:
  using APVTS=juce::AudioProcessorValueTreeState;
@@ -152,7 +153,15 @@ public:
  double getTailLengthSeconds()const override{return 0;}
  int getNumPrograms()override{return 1;}int getCurrentProgram()override{return 0;}void setCurrentProgram(int)override{}const juce::String getProgramName(int)override{return "Initial";}void changeProgramName(int,const juce::String&)override{}
  void getStateInformation(juce::MemoryBlock& data)override{auto tree=state.copyState();for(int i=0;i<midiTargets;++i)tree.setProperty(juce::Identifier("cc"+juce::String(i)),midiCC[i].load(),nullptr);if(auto xml=tree.createXml())copyXmlToBinary(*xml,data);}
- void setStateInformation(const void* data,int size)override{if(auto xml=getXmlFromBinary(data,size))if(xml->hasTagName(state.state.getType())){auto tree=juce::ValueTree::fromXml(*xml);for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(tree.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);compareTrimDb.store(0);compareCancel.store(true);for(int i=0;i<8;++i)for(auto key:{"analog","character","allButtons"}){auto pid=id(i,key);bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",juce::String(key)=="character"?.65:0.,nullptr);tree.addChild(child,-1,nullptr);}}for(auto* parameter:getParameters()){auto* a=dynamic_cast<juce::RangedAudioParameter*>(parameter);if(!a)continue;auto pid=a->getParameterID();bool found=false;for(int j=0;j<tree.getNumChildren();++j)if(tree.getChild(j).getProperty("id").toString()==pid){found=true;break;}if(!found){juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",a->convertFrom0to1(a->getDefaultValue()),nullptr);tree.addChild(child,-1,nullptr);}}state.replaceState(tree); }}
+ void setStateInformation(const void* data,int size)override{
+  if(!data||size<=0||size>4*1024*1024)return;auto xml=getXmlFromBinary(data,size);if(!xml||!xml->hasTagName(state.state.getType()))return;
+  auto source=juce::ValueTree::fromXml(*xml);juce::ValueTree clean(state.state.getType());int found=0;
+  for(auto* parameter:getParameters()){auto* a=dynamic_cast<juce::RangedAudioParameter*>(parameter);if(!a)continue;auto pid=a->getParameterID();auto range=a->getNormalisableRange();float value=a->convertFrom0to1(a->getDefaultValue());bool seen=false;
+   for(int j=0;j<source.getNumChildren();++j){auto child=source.getChild(j);if(child.getProperty("id").toString()!=pid)continue;if(seen||!child.hasProperty("value"))return;seen=true;auto str=child.getProperty("value").toString();auto utf=str.toRawUTF8();char* end=nullptr;float x=std::strtof(utf,&end);if(end==utf||*end!='\0'||!std::isfinite(x)||x<range.start-.001f||x>range.end+.001f)return;value=range.snapToLegalValue(std::clamp(x,range.start,range.end));++found;}
+   juce::ValueTree child("PARAM");child.setProperty("id",pid,nullptr);child.setProperty("value",value,nullptr);clean.addChild(child,-1,nullptr);
+  }
+  if(found<10)return;for(int i=0;i<midiTargets;++i)midiCC[i].store(juce::jlimit(-1,2047,int(source.getProperty(juce::Identifier("cc"+juce::String(i)),-1))));learnTarget.store(-1);compareTrimDb.store(0);compareCancel.store(true);state.replaceState(clean);
+ }
 };
 #include "Editor.h"
 juce::AudioProcessorEditor* Processor::createEditor(){return new Editor(*this);}
