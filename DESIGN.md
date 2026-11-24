@@ -4,3 +4,5 @@ Graphite #1C1F24, titane #AAB2BC, carmin #A9253F, ivoire #E9E5DB, menthe #49C5B0
 Révision v0.1.2 : géométrie du rack Legends 1600 x 930, rendu vectoriel à 1120 x 651, boîtiers métalliques, 8 modules en deux rangées, pages dédiées. Palette Titanium Red. Pas de fond image statique. Validation visuelle en hôte encore nécessaire.
 
 Version 0.1.3 : fenêtre adaptative redimensionnable et encyclopédie paginée sans ascenseur. Validation en hôte requise.
+
+v0.2.0 : bibliothèque 3 pages, navigateur 10 lignes/page, recherche, catégories, favoris de session ; géométrie XL inchangée.

@@ -1,5 +1,6 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Dynamics.h"
+#include "FactoryPresets.h"
 class Processor final: public juce::AudioProcessor {
 public:
  using APVTS=juce::AudioProcessorValueTreeState;
@@ -31,6 +32,12 @@ public:
   const char* keys[]={"on","model","threshold","ratio","attack","release","makeup","mix","color"};
   for(int i=0;i<8;++i){meters[i].store(0);for(int j=0;j<9;++j)values[i][j]=state.getRawParameterValue(id(i,keys[j]));}
   parallel=state.getRawParameterValue("parallel");balance=state.getRawParameterValue("balance");
+ }
+ void loadFactory(int index){
+  const auto preset=liberty::factoryPreset(index);
+  auto put=[&](const juce::String& key,float value){if(auto* a=state.getParameter(key)){a->beginChangeGesture();a->setValueNotifyingHost(a->convertTo0to1(value));a->endChangeGesture();}};
+  for(int i=0;i<8;++i){const auto& s=preset.slots[size_t(i)];put(id(i,"on"),s.enabled?1.f:0.f);put(id(i,"model"),float(s.model));put(id(i,"threshold"),s.threshold);put(id(i,"ratio"),s.ratio);put(id(i,"attack"),s.attack);put(id(i,"release"),s.release);put(id(i,"makeup"),s.makeup);put(id(i,"mix"),s.mix);put(id(i,"color"),s.color);}
+  put("parallel",preset.parallel?1.f:0.f);put("balance",preset.balance);
  }
  const juce::String getName() const override{return "Compresseur Legends";}
  void prepareToPlay(double sr,int)override{rack.prepare(static_cast<float>(sr));}

@@ -27,9 +27,9 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  using R=clskin::R;
  using AP=Processor::APVTS;
  Processor& p;
- enum class Screen{Rack,Detail,Library,History,Routing};
+ enum class Screen{Rack,Detail,Library,History,Routing,Presets};
  Screen screen=Screen::Rack;
- int selected=0;int historyPage=0;bool french=true,viewB=false;
+ int selected=0;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;bool french=true,viewB=false;
  juce::ValueTree snapshotA,snapshotB;
  struct Hot {R bounds;std::function<void()> click;juce::RangedAudioParameter* param=nullptr;};
  std::vector<Hot> hits;
@@ -40,14 +40,14 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  juce::String tr(const char* fr,const char* en)const{return u(french?fr:en);}
  juce::RangedAudioParameter* param(int slot,const char* key){return p.state.getParameter(Processor::id(slot,key));}
  float raw(int slot,const char* key){return p.state.getRawParameterValue(Processor::id(slot,key))->load();}
- int model(int slot){return juce::jlimit(0,7,int(raw(slot,"model")));}
+ int model(int slot){return juce::jlimit(0,liberty::modelCount-1,int(raw(slot,"model")));}
  bool on(int slot){return raw(slot,"on")>.5f;}
  void set(juce::RangedAudioParameter* a,float v){if(!a)return;a->beginChangeGesture();a->setValueNotifyingHost(juce::jlimit(0.f,1.f,v));a->endChangeGesture();}
  void setRaw(int slot,const char* key,float v){auto* a=param(slot,key);set(a,a->convertTo0to1(v));}
  void swapSlots(int a,int b){if(b<0||b>=8)return;for(auto key:{"on","model","threshold","ratio","attack","release","makeup","mix","color"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}selected=b;}
  void toggleAB(){if(viewB){snapshotB=p.state.copyState();p.state.replaceState(snapshotA.createCopy());}else{snapshotA=p.state.copyState();p.state.replaceState(snapshotB.createCopy());}viewB=!viewB;}
- static juce::Colour color(int m){constexpr unsigned c[]={0xff8d2638,0xff655e50,0xff58616b,0xff536677,0xff643654,0xff286054,0xff756956,0xff41454d};return juce::Colour(c[juce::jlimit(0,7,m)]);}
- static const char* family(int m){constexpr const char* f[]={"FET","OPTO","VCA","VCA","VARI-MU","DIODE","OPTO","DIGITAL"};return f[m];}
+ static juce::Colour color(int m){constexpr unsigned c[]={0xff8d2638,0xff655e50,0xff58616b,0xff536677,0xff643654,0xff286054,0xff756956,0xff41454d,0xff8d2638,0xff763344,0xff6c6352,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b};return juce::Colour(c[juce::jlimit(0,liberty::modelCount-1,m)]);}
+ static const char* family(int m){constexpr const char* f[]={"FET","OPTO","VCA","VCA","VARI-MU","DIODE","OPTO","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL"};return f[m];}
  void drawLabel(juce::Graphics& g,const juce::String& s,R r,float size,juce::Colour colour,bool serif=false,juce::Justification alignment=juce::Justification::centredLeft,bool bold=false){
   g.setColour(colour);auto name=serif?juce::Font::getDefaultSerifFontName():juce::Font::getDefaultSansSerifFontName();
   g.setFont(juce::Font(juce::FontOptions(name,size,bold?juce::Font::bold:juce::Font::plain)));g.drawFittedText(s,r.toNearestInt(),alignment,1,.8f);
@@ -116,18 +116,19 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"TITANIUM RED  /  v0.1.3",R{108,86,500,20},15,muted);
-  button(g,R{705,32,155,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
-  button(g,R{873,32,190,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{screen=Screen::Library;},false,screen==Screen::Library);
-  button(g,R{1076,32,170,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
-  button(g,R{1259,32,130,48},viewB?"A / [B]":"[A] / B",[this]{toggleAB();},false,viewB);
+  drawLabel(g,"TITANIUM RED  /  v0.2.0",R{108,86,500,20},15,muted);
+  button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
+  button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
+  button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
+  button(g,R{1290,32,100,48},viewB?"A / [B]":"[A] / B",[this]{toggleAB();},false,viewB);
   button(g,R{1402,32,157,48},french?u("Français"):"English",[this]{french=!french;},false,false);
+  button(g,R{1128,32,151,48},"PRESETS 100",[this]{presetPage=0;screen=Screen::Presets;},false,screen==Screen::Presets);
   line(g,20,118,1580,118,goldDark,1.5f);
  }
  void board(juce::Graphics& g){
   using namespace clskin;surface(g,R{28,139,1544,641},navySoft,midnight,18.f,goldDark);
   drawLabel(g,tr("COLLECTION LIBERTY","LIBERTY COLLECTION"),R{65,146,310,27},19,cream,false,juce::Justification::centredLeft,true);
-  drawLabel(g,tr("8 PROFILS EXPÉRIMENTAUX","8 EXPERIMENTAL PROFILES"),R{390,146,440,27},17,muted);
+  drawLabel(g,tr("20 PROFILS EXPÉRIMENTAUX","20 EXPERIMENTAL PROFILES"),R{390,146,440,27},17,muted);
   bool par=p.state.getRawParameterValue("parallel")->load()>.5f;
   drawLabel(g,par?"IN > SPLIT A/B > MIX > OUT":"IN > 1 > 2 > 3 > 4 > 5 > 6 > 7 > 8 > OUT",R{860,146,675,27},16,cream,false,juce::Justification::centredRight,true);
   std::array<R,8> boxes;for(int i=0;i<8;++i)boxes[i]=R{56.f+(i%4)*381.f,177.f+(i/4)*294.f,355.f,281.f};
@@ -141,7 +142,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
    button(g,R{b.getRight()-72,b.getY()+8,62,25},on(i)?"ON":"OFF",[this,i]{setRaw(i,"on",on(i)?0.f:1.f);},false,on(i),13);
    R unit{b.getX()+37,b.getY()+39,b.getWidth()-74,202};enclosure(g,unit,i,model(i),true);hit(unit,[this,i]{selected=i;screen=Screen::Detail;});
    button(g,R{b.getX()+15,b.getBottom()-34,123,26},tr("ÉDITER","EDIT"),[this,i]{selected=i;screen=Screen::Detail;},false,false,13);
-   button(g,R{b.getX()+144,b.getBottom()-34,118,26},tr("CHOISIR","CHOOSE"),[this,i]{selected=i;screen=Screen::Library;},false,false,13);
+   button(g,R{b.getX()+144,b.getBottom()-34,118,26},tr("CHOISIR","CHOOSE"),[this,i]{selected=i;libraryPage=0;screen=Screen::Library;},false,false,13);
    button(g,R{b.getX()+269,b.getBottom()-34,32,26},"<",[this,i]{swapSlots(i,i-1);});
    button(g,R{b.getX()+307,b.getBottom()-34,32,26},">",[this,i]{swapSlots(i,i+1);});
   }
@@ -158,7 +159,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   using namespace clskin;panel(g,tr("ÉDITION DU COMPRESSEUR","COMPRESSOR EDITOR")+"  /  "+juce::String(selected+1));
   enclosure(g,R{120,258,415,230},selected,model(selected),false);
   button(g,R{130,520,190,45},on(selected)?tr("ACTIF","ACTIVE"):"BYPASS",[this]{setRaw(selected,"on",on(selected)?0.f:1.f);},false,on(selected));
-  button(g,R{332,520,190,45},tr("REMPLACER","REPLACE"),[this]{screen=Screen::Library;});
+  button(g,R{332,520,190,45},tr("REMPLACER","REPLACE"),[this]{libraryPage=0;screen=Screen::Library;});
   button(g,R{130,579,392,45},tr("HISTOIRE ET CARACTÈRE","HISTORY AND CHARACTER"),[this]{historyPage=0;screen=Screen::History;});
   const char* keys[]={"threshold","ratio","attack","release","makeup","mix","color"};
   juce::String names[]={tr("Seuil","Threshold"),"Ratio",tr("Attaque","Attack"),tr("Relâchement","Release"),"Gain",tr("Mélange","Mix"),tr("Couleur","Color")};
@@ -167,15 +168,42 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,tr("Les commandes agissent sur le moteur DSP du slot.","Controls adjust the selected slot DSP."),R{120,805,1360,45},19,muted,false,juce::Justification::centred);
  }
  void library(juce::Graphics& g){
-  using namespace clskin;panel(g,tr("BIBLIOTHÈQUE DE COMPRESSEURS","COMPRESSOR LIBRARY")+"  /  "+tr("SLOT","SLOT")+" "+juce::String(selected+1));
-  for(int i=0;i<8;++i){R b{115.f+(i%4)*350,245.f+(i/4)*302,330,280};surface(g,b,navy,midnight,9.f,goldDark);enclosure(g,R{b.getX()+16,b.getY()+12,298,206},-1,i,true);button(g,R{b.getX()+30,b.getBottom()-50,270,37},tr("CHARGER","LOAD"),[this,i]{setRaw(selected,"model",float(i));setRaw(selected,"on",1);screen=Screen::Detail;});}
+  using namespace clskin;panel(g,tr("BIBLIOTHÈQUE DE COMPRESSEURS","COMPRESSOR LIBRARY")+"  /  "+juce::String(selected+1));
+  for(int j=0;j<8;++j){int i=libraryPage*8+j;if(i>=liberty::modelCount)break;R b{115.f+(j%4)*350,239.f+(j/4)*273,330,262};surface(g,b,navy,midnight,9.f,goldDark);enclosure(g,R{b.getX()+16,b.getY()+8,298,196},-1,i,true);button(g,R{b.getX()+30,b.getBottom()-47,270,35},tr("CHARGER","LOAD"),[this,i]{setRaw(selected,"model",float(i));setRaw(selected,"on",1);screen=Screen::Detail;});}
+  for(int t=0;t<3;++t)button(g,R{640.f+t*110,825,95,43},juce::String(t+1)+" / 3",[this,t]{libraryPage=t;},false,libraryPage==t);
+ }
+ juce::String presetName(int i)const{return juce::String(liberty::categories[size_t(i/10)].prefix)+" - "+liberty::variants[size_t(i%10)];}
+ void syncSearch(){presetSearch.setVisible(screen==Screen::Presets);presetSearch.setTextToShowWhenEmpty(tr("Rechercher un preset...","Search presets..."),clskin::muted);}
+ void presets(juce::Graphics& g){
+  using namespace clskin;panel(g,tr("PRESETS D'USINE","FACTORY PRESETS")+"  /  100");
+  button(g,R{114,245,242,40},tr("TOUS","ALL"),[this]{presetCategory=-1;presetPage=0;},false,presetCategory<0);
+  for(int c=0;c<liberty::categoryCount;++c){const auto& cat=liberty::categories[size_t(c)];button(g,R{114,293.f+c*43,242,37},u(french?cat.fr:cat.en),[this,c]{presetCategory=c;presetPage=0;},false,presetCategory==c);}
+  button(g,R{114,742,242,43},tr("FAVORIS","FAVORITES"),[this]{onlyFavorites=!onlyFavorites;presetPage=0;},false,onlyFavorites);
+  std::vector<int> found;auto query=presetSearch.getText().trim();
+  for(int i=0;i<liberty::factoryCount;++i){const auto& cat=liberty::categories[size_t(i/10)];auto info=presetName(i)+" "+u(cat.fr)+" "+u(cat.en)+" "+(i%10>=5?"Parallel Parallèle":"Series Série");if((presetCategory<0||i/10==presetCategory)&&(!onlyFavorites||favorites[size_t(i)])&&(query.isEmpty()||info.containsIgnoreCase(query)))found.push_back(i);}
+  int pages=std::max(1,int((found.size()+9)/10));presetPage=juce::jlimit(0,pages-1,presetPage);
+  drawLabel(g,tr("NOM DU PRESET","PRESET NAME"),R{390,300,480,31},17,muted,false,juce::Justification::centredLeft,true);
+  drawLabel(g,tr("ROUTAGE","ROUTING"),R{970,300,178,31},17,muted,false,juce::Justification::centred,true);
+  for(int j=0;j<10;++j){int pos=presetPage*10+j;if(pos>=int(found.size()))break;int i=found[size_t(pos)];float y=336.f+j*44.f;surface(g,R{382,y,1090,39},i==lastPreset?sapphire:navy,midnight,5.f,i==lastPreset?gold:goldDark);
+   drawLabel(g,juce::String(i+1).paddedLeft('0',3),R{395,y+2,65,35},17,muted);
+   drawLabel(g,presetName(i),R{470,y+2,480,35},20,cream,false,juce::Justification::centredLeft,true);
+   drawLabel(g,i%10>=5?tr("PARALLÈLE","PARALLEL"):tr("SÉRIE","SERIES"),R{965,y+2,175,35},16,cream,false,juce::Justification::centred);
+   button(g,R{1150,y+3,102,32},"FAV",[this,i]{favorites[size_t(i)]=!favorites[size_t(i)];},false,favorites[size_t(i)],14);
+   button(g,R{1262,y+3,192,32},tr("CHARGER","LOAD"),[this,i]{p.loadFactory(i);lastPreset=i;selected=0;screen=Screen::Rack;},true,false,15);
+  }
+  if(found.empty())drawLabel(g,tr("Aucun résultat","No results"),R{382,365,1090,80},24,muted,false,juce::Justification::centred);
+  button(g,R{382,802,85,43},"<",[this]{presetPage=std::max(0,presetPage-1);});
+  button(g,R{600,802,85,43},">",[this,pages]{presetPage=std::min(pages-1,presetPage+1);});
+  drawLabel(g,juce::String(presetPage+1)+" / "+juce::String(pages),R{477,802,110,43},19,cream,false,juce::Justification::centred,true);
+  drawLabel(g,juce::String(int(found.size()))+" "+tr("résultats","results"),R{720,802,280,43},18,muted);
+  drawLabel(g,tr("Favoris de la session","Session favorites"),R{1080,802,380,43},17,muted,false,juce::Justification::centredRight);
  }
  void history(juce::Graphics& g){
   using namespace clskin;panel(g,tr("HISTOIRE ET CARACTÈRE","HISTORY AND CHARACTER"));
   const int m=model(selected);const auto& entry=clhistory::entries[size_t(m)];
   enclosure(g,R{120,251,430,250},selected,m,false);
   drawLabel(g,tr("REPÈRES HISTORIQUES","HISTORICAL LANDMARKS"),R{127,517,416,27},19,muted,false,juce::Justification::centred,true);
-  drawLabel(g,m==7?tr("ÈRE NUMÉRIQUE","DIGITAL ERA"):u(entry.era),R{127,550,416,46},32,cream,true,juce::Justification::centred);
+  drawLabel(g,(m==7||m>=18)?tr("ÈRE NUMÉRIQUE","DIGITAL ERA"):u(entry.era),R{127,550,416,46},32,cream,true,juce::Justification::centred);
   drawLabel(g,u(entry.reference),R{127,607,416,38},20,cream,false,juce::Justification::centred,true);
   drawLabel(g,tr("Référence de famille, pas une copie","Family reference, not a clone"),R{127,650,416,27},17,muted,false,juce::Justification::centred);
   button(g,R{125,709,420,48},tr("ÉDITER LE COMPRESSEUR","EDIT COMPRESSOR"),[this]{screen=Screen::Detail;});
@@ -219,13 +247,14 @@ public:
   setResizable(true,true);
   setResizeLimits(int(std::floor(1600*minScale)),int(std::floor(930*minScale)),int(std::floor(1600*maxScale)),int(std::floor(930*maxScale)));
   if(auto* c=getConstrainer())c->setFixedAspectRatio(1600.0/930.0);
+  presetSearch.setColour(juce::TextEditor::backgroundColourId,clskin::navy);presetSearch.setColour(juce::TextEditor::textColourId,clskin::cream);presetSearch.setColour(juce::TextEditor::outlineColourId,clskin::goldDark);presetSearch.onTextChange=[this]{presetPage=0;repaint();};addChildComponent(presetSearch);syncSearch();
   snapshotA=p.state.copyState();snapshotB=snapshotA.createCopy();
   setSize(int(std::floor(1600*initialScale)),int(std::floor(930*initialScale)));startTimerHz(20);
  }
  ~Editor()override{stopTimer();if(dragging)dragging->endChangeGesture();}
- void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;}
- void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;}}
- void mouseDown(const juce::MouseEvent& e)override{if(!e.mods.isLeftButtonDown())return;auto pt=logical(e.position);for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param){dragging=it->param;startValue=dragging->getValue();startY=pt.y;dragging->beginChangeGesture();}else if(it->click){auto f=it->click;f();}repaint();return;}}
+ void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;presetSearch.setBounds(juce::Rectangle<float>{382,245,1090,43}.transformedBy(juce::AffineTransform::scale(scale).translated(xOffset,yOffset)).toNearestInt());presetSearch.setFont(juce::Font(juce::FontOptions(20.f*scale)));}
+ void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;}}
+ void mouseDown(const juce::MouseEvent& e)override{if(!e.mods.isLeftButtonDown())return;auto pt=logical(e.position);for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param){dragging=it->param;startValue=dragging->getValue();startY=pt.y;dragging->beginChangeGesture();}else if(it->click){auto f=it->click;f();syncSearch();}repaint();return;}}
  void mouseDrag(const juce::MouseEvent& e)override{if(dragging){dragging->setValueNotifyingHost(juce::jlimit(0.f,1.f,startValue+(startY-logical(e.position).y)/160.f));repaint();}}
  void mouseUp(const juce::MouseEvent&)override{if(dragging){dragging->endChangeGesture();dragging=nullptr;}}
  void mouseDoubleClick(const juce::MouseEvent& e)override{auto pt=logical(e.position);for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param)set(it->param,it->param->getDefaultValue());return;}}

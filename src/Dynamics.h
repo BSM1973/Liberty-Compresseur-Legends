@@ -7,7 +7,8 @@ namespace liberty {
 inline float db(float x){return 20.f*std::log10(std::max(x,1.e-9f));}
 inline float gain(float x){return std::pow(10.f,x*.05f);}
 struct Model{const char* name;float attackScale,releaseScale,knee,memory,drive,rms;bool feedback;};
-inline constexpr std::array<Model,8> models {{
+inline constexpr int modelCount=20;
+inline constexpr std::array<Model,modelCount> models {{
  {"FET Impact", .25f, .65f, 2.f, .04f, .23f, .05f, true},
  {"Opto Velvet", 2.5f, 1.8f, 9.f, .72f, .12f, .60f, true},
  {"VCA Glue", 1.f, 1.f, 4.f, .05f, .04f, .45f, false},
@@ -15,7 +16,19 @@ inline constexpr std::array<Model,8> models {{
  {"Vari-Mu Warm", 2.f, 2.2f, 14.f, .45f, .19f, .35f, true},
  {"Diode Bronze", 1.3f, 1.35f, 5.f, .2f, .31f, .2f, true},
  {"Opto Clear", 1.7f, 1.4f, 7.f, .52f, .025f, .7f, false},
- {"Digital Precision", 1.f, 1.f, 0.f, 0.f, 0.f, 0.f, false}
+ {"Digital Precision", 1.f, 1.f, 0.f, 0.f, 0.f, 0.f, false},
+ {"FET Lightning",0.1f,0.42f,1.0f,0.01f,0.18f,0.02f,true},
+ {"FET Classic",0.45f,1.1f,3.0f,0.12f,0.28f,0.16f,true},
+ {"Opto Silk",3.2f,2.4f,12.0f,0.83f,0.065f,0.85f,true},
+ {"Opto Studio",1.2f,1.15f,6.0f,0.35f,0.09f,0.62f,false},
+ {"VCA Master",1.4f,1.5f,8.0f,0.08f,0.012f,0.75f,false},
+ {"VCA Snap",0.38f,0.52f,0.5f,0.01f,0.045f,0.03f,false},
+ {"Vari-Mu Silk",2.8f,2.9f,18.0f,0.65f,0.11f,0.55f,true},
+ {"Vari-Mu Density",1.5f,1.9f,11.0f,0.38f,0.35f,0.25f,true},
+ {"Diode Iron",0.85f,1.0f,3.0f,0.12f,0.4f,0.13f,true},
+ {"Diode Smooth",1.8f,1.9f,9.0f,0.42f,0.21f,0.5f,true},
+ {"Digital Peak",0.28f,0.75f,0.0f,0.0f,0.0f,0.0f,false},
+ {"Digital RMS",1.1f,1.25f,6.0f,0.15f,0.0f,0.95f,false}
 }};
 struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;};
 inline float reduction(float over,float ratio,float knee){
@@ -34,7 +47,7 @@ public:
  float gr()const{return applied;}
  void process(float& l,float& r,const Parameters& p){
   if(!p.enabled){reset();return;}
-  const auto& m=models[static_cast<size_t>(std::clamp(p.model,0,7))];
+  const auto& m=models[static_cast<size_t>(std::clamp(p.model,0,modelCount-1))];
   const float peak=std::max(std::abs(l),std::abs(r));
   const float detector=m.feedback?peak*gain(-previous):peak;
   const float rmsC=coefficient(15.f,sr);
