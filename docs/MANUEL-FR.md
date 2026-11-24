@@ -1,8 +1,8 @@
-# Compresseur Legends — Manuel utilisateur FR, v0.9 (préversion)
-Liberty Music Software — version de validation, non signée à ce stade.
+# Compresseur Legends — Manuel utilisateur FR, v1.0
+Liberty Music Software — édition commerciale candidate.
 
 ## 1. Installation et formats
-macOS Apple Silicon : AU, VST3, Standalone. Windows x64 : VST3 et Standalone. Installer les bundles au moyen des futurs installateurs officiels ; en préversion, décompresser les artefacts de test et utiliser les dossiers de plugins de l'hôte. Relancer le scan. Dans Ableton Live, activer les dossiers VST3/AU selon la plateforme. Dans Logic Pro, utiliser AU. Les versions Intel macOS ne sont pas fournies. La signature et la notarisation sont prévues pour la version commerciale.
+macOS Apple Silicon (macOS 12 ou supérieur) : AU et VST3 via l’installateur .pkg. Windows x64 : VST3 et Standalone via l’installateur .exe. Fermer le DAW avant installation, lancer l’installateur, puis relancer le scan. AU : /Library/Audio/Plug-Ins/Components ; VST3 macOS : /Library/Audio/Plug-Ins/VST3 ; VST3 Windows : dossier VST3 commun. Dans Logic Pro, utiliser AU. L’installateur macOS doit être signé et notarisé avant distribution ; vérifier le ticket. L’installateur Windows reste non signé Authenticode. Les Mac Intel ne sont pas pris en charge par ce package ARM64.
 
 ## 2. Premier traitement
 Insérer sur une piste audio. Dans RACK, activer un slot, choisir un modèle dans BIBLIOTHÈQUE. Seuil : niveau de déclenchement ; Ratio : pente ; Attaque et Relâchement en ms ; Gain : compensation de sortie ; Mélange : dry/wet ; Couleur : saturation selon le modèle. Commencer à 2:1, attaque 20 ms, relâchement 150 ms, régler le seuil pour 2–4 dB de réduction ; comparer à niveau égal. Les modèles sont des interprétations logicielles originales, pas des mesures de matériel.
@@ -32,4 +32,4 @@ PERSONNELS : nom, catégorie, tags, enregistrer, rechercher, charger, importer/e
 Clic droit sur une commande compatible : MIDI Learn, envoyer un CC, effacer au besoin. L'hôte doit acheminer les messages MIDI à l'effet ; selon le format, cette fonction peut varier. Les nouveaux paramètres PRO et de routage sont automatisables mais pas tous assignables par MIDI Learn. Le projet conserve les paramètres et affectations MIDI. Les presets personnels conservent les paramètres, pas les affectations MIDI.
 
 ## 11. Dépannage et limites de validation
-En cas de charge élevée : réduire oversampling, FFT et slots actifs. Éviter de modifier la topologie en lecture. Vérifier la latence avec un signal impulsionnel et le bypass. Interface FR/EN, taille adaptable au bureau. Tester les textes, menus et commandes sur écran 13 pouces avant publication. Signaler le format, OS, DAW, fréquence, buffer, version du plugin, preset et étapes de reproduction. Les builds de test ne sont pas des installateurs signés.
+En cas de charge élevée : réduire oversampling, FFT et slots actifs. Éviter de modifier la topologie en lecture. Vérifier la latence avec un signal impulsionnel et le bypass. Interface FR/EN, taille adaptable au bureau. Tester les textes, menus et commandes sur écran 13 pouces avant publication. Signaler le format, OS, DAW, fréquence, buffer, version du plugin, preset et étapes de reproduction. Ne distribuer que les installateurs vérifiés issus du Liberty Release Center. Les mesures de conformité et les essais d’écoute en DAW restent à documenter avant la mise en vente.

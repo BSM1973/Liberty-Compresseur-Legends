@@ -192,7 +192,7 @@ bool proEQPage=false;int historyPage=0,libraryPage=0,presetPage=0,presetCategory
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"PROFESSIONAL QUALITY CONTROL  /  v0.9.0",R{108,86,500,20},15,muted);
+  drawLabel(g,"STUDIO HARDWARE  /  v1.0.0",R{108,86,500,20},15,muted);
   button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);

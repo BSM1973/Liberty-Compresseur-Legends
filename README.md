@@ -42,3 +42,6 @@ Four parallel lanes with each of 8 slots assigned exactly once; drag/drop and se
 
 ## v0.9.0 Professional Quality Control
 Fixed coefficient caching, sorted crossover cache, FIR true-peak estimate, guarded project state restore. CI adds CSV measurements, 60-second simulated rack runs, full processor state and oversampling smoke tests, encoding scan and manual validation plan. See docs/MANUEL-FR.md and docs/VALIDATION.md. Listening, host PDC, visual and full BS.1770 compliance pending.
+
+## v1.0.0 release candidate
+Version and distribution metadata only; DSP, preset states, plugin identifiers and parameter layout unchanged from validated v0.9.0. Commercial packaging via trusted Liberty Release Center in Liberty-ECHO-86. Do not list for sale until notarized installer, Windows installer and manual DAW listening/UI acceptance are verified. Windows installer is unsigned. LUFS/TP remain estimates.
