@@ -15,3 +15,6 @@ Version 0.1.3 : fenêtre redimensionnable au ratio 1600:930, cible 1440x837 limi
 
 ## v0.2.0
 20 profils de compression originaux (8 précédents inchangés), 100 presets d'usine calculés à partir de réglages par usage, 50 série / 50 parallèle, navigateur paginé avec recherche et favoris de session. Encyclopédie FR/EN 20 fiches, trois onglets. Les IDs de modèles 0-7 restent identiques ; la plage normalisée du paramètre model s'élargit, vérifier les anciennes automatisations de choix de modèle. Ni émulations mesurées ni nouveaux circuits PWM/multibandes à ce stade. MIDI Learn et favoris persistants à venir.
+
+## v0.3.0
+40 profils et 200 configurations (100 série / 100 parallèle). Nouveaux détecteurs filtrés, facteur de crête, relâchement adaptatif et compression deux bandes à 220 Hz. Sidechain externe par slot (retour interne si bus désactivé), MIDI CC par canal sur 57 potentiomètres avec mémorisation projet, favoris sur disque, courbe nominale et historique réel de GR. Les 20 premiers profils et 100 presets sont conservés. Automation normalisée de choix du modèle à vérifier après extension. Tests hôte, performance et compatibilité MIDI à valider ; pas d'émulation mesurée, pas de PWM physique ni FFT spectrale.

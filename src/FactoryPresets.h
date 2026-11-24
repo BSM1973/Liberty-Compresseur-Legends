@@ -1,7 +1,7 @@
 #pragma once
 #include "Dynamics.h"
 namespace liberty {
-inline constexpr int factoryCount=100,categoryCount=10;
+inline constexpr int factoryCount=200,categoryCount=10;
 struct Category{const char* fr;const char* en;std::array<int,5> models;float threshold,ratio,attack,release,color;const char* prefix;};
 inline constexpr std::array<Category,categoryCount> categories{{
  {"Voix","Vocals",{0,1,8,10,11},-22.0f,3.0f,12.0f,160.0f,0.1f,"Lead vocal"},
@@ -18,7 +18,7 @@ inline constexpr std::array<Category,categoryCount> categories{{
 inline constexpr std::array<const char*,10> variants{{"Gentle","Balanced","Focused","Firm","Dual Stage","Parallel Soft","Parallel Blend","Parallel Punch","Parallel Dense","Parallel Dual"}};
 struct FactoryPreset{std::array<Parameters,8> slots{};bool parallel=false;float balance=.5f;};
 inline FactoryPreset factoryPreset(int index){
- index=std::clamp(index,0,factoryCount-1);int c=index/10,v=index%10,k=v%5;const auto& cat=categories[size_t(c)];
+ index=std::clamp(index,0,factoryCount-1);int c=(index%100)/10,v=index%10,k=v%5;bool advanced=index>=100;const auto& cat=categories[size_t(c)];
  FactoryPreset p;for(int i=0;i<8;++i)p.slots[size_t(i)].model=i;
  p.parallel=v>=5;p.balance=p.parallel?.22f+.12f*k:.5f;
  auto make=[&](int model,float threshold,float ratio,float attack,float release,float mix,float color){
@@ -27,6 +27,10 @@ inline FactoryPreset factoryPreset(int index){
  p.slots[0]=make(cat.models[size_t(k)],cat.threshold+4.f-2.f*k,cat.ratio*(.8f+.18f*k),cat.attack*(1.25f-.13f*k),cat.release*(1.2f-.07f*k),1.f,cat.color*(.65f+.15f*k));
  if(!p.parallel&&k==4)p.slots[1]=make(cat.models[1],cat.threshold+3.f,1.7f,cat.attack*1.4f,cat.release*1.4f,.7f,cat.color*.5f);
  if(p.parallel){p.slots[4]=make(cat.models[size_t((k+2)%5)],cat.threshold-5.f-1.5f*k,cat.ratio+1.f+.6f*k,cat.attack*.65f,cat.release*.8f,1.f,cat.color);if(k==4)p.slots[5]=make(cat.models[0],cat.threshold,2.f,cat.attack,cat.release*1.5f,.7f,cat.color*.5f);}
+ if(advanced){
+  constexpr int ids[10][5]={{20,22,23,30,31},{21,25,28,36,39},{23,25,32,35,38},{20,23,26,33,34},{22,24,30,34,37},{24,25,27,28,29},{24,26,30,34,37},{26,29,30,34,37},{21,27,28,38,39},{20,31,33,36,39}};
+  p.slots[0].model=ids[c][k];if(p.slots[1].enabled)p.slots[1].model=ids[c][1];if(p.slots[4].enabled)p.slots[4].model=ids[c][(k+2)%5];if(p.slots[5].enabled)p.slots[5].model=ids[c][0];
+ }
  return p;
 }
 }
