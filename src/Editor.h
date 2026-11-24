@@ -1,4 +1,5 @@
 #pragma once
+#include "History.h"
 #include <functional>
 #include <vector>
 #include <utility>
@@ -28,7 +29,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  Processor& p;
  enum class Screen{Rack,Detail,Library,History,Routing};
  Screen screen=Screen::Rack;
- int selected=0;bool french=true,viewB=false;
+ int selected=0;int historyPage=0;bool french=true,viewB=false;
  juce::ValueTree snapshotA,snapshotB;
  struct Hot {R bounds;std::function<void()> click;juce::RangedAudioParameter* param=nullptr;};
  std::vector<Hot> hits;
@@ -115,7 +116,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"TITANIUM RED  /  v0.1.2",R{108,86,500,20},15,muted);
+  drawLabel(g,"TITANIUM RED  /  v0.1.3",R{108,86,500,20},15,muted);
   button(g,R{705,32,155,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{873,32,190,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{1076,32,170,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
@@ -136,7 +137,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
    auto b=boxes[i];surface(g,b,navy,midnight,10.f,selected==i?gold:goldDark);
    drawLabel(g,juce::String(i+1).paddedLeft('0',2),R{b.getX()+13,b.getY()+7,45,27},23,cream,true);
    drawLabel(g,family(model(i)),R{b.getX()+61,b.getY()+9,100,23},14,muted,false,juce::Justification::centredLeft,true);
-   button(g,R{b.getRight()-180,b.getY()+8,102,25},tr("HISTOIRE","HISTORY"),[this,i]{selected=i;screen=Screen::History;},false,false,13);
+   button(g,R{b.getRight()-180,b.getY()+8,102,25},tr("HISTOIRE","HISTORY"),[this,i]{selected=i;historyPage=0;screen=Screen::History;},false,false,13);
    button(g,R{b.getRight()-72,b.getY()+8,62,25},on(i)?"ON":"OFF",[this,i]{setRaw(i,"on",on(i)?0.f:1.f);},false,on(i),13);
    R unit{b.getX()+37,b.getY()+39,b.getWidth()-74,202};enclosure(g,unit,i,model(i),true);hit(unit,[this,i]{selected=i;screen=Screen::Detail;});
    button(g,R{b.getX()+15,b.getBottom()-34,123,26},tr("ÉDITER","EDIT"),[this,i]{selected=i;screen=Screen::Detail;},false,false,13);
@@ -158,7 +159,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   enclosure(g,R{120,258,415,230},selected,model(selected),false);
   button(g,R{130,520,190,45},on(selected)?tr("ACTIF","ACTIVE"):"BYPASS",[this]{setRaw(selected,"on",on(selected)?0.f:1.f);},false,on(selected));
   button(g,R{332,520,190,45},tr("REMPLACER","REPLACE"),[this]{screen=Screen::Library;});
-  button(g,R{130,579,392,45},tr("HISTOIRE ET CARACTÈRE","HISTORY AND CHARACTER"),[this]{screen=Screen::History;});
+  button(g,R{130,579,392,45},tr("HISTOIRE ET CARACTÈRE","HISTORY AND CHARACTER"),[this]{historyPage=0;screen=Screen::History;});
   const char* keys[]={"threshold","ratio","attack","release","makeup","mix","color"};
   juce::String names[]={tr("Seuil","Threshold"),"Ratio",tr("Attaque","Attack"),tr("Relâchement","Release"),"Gain",tr("Mélange","Mix"),tr("Couleur","Color")};
   const char* units[]={" dB",":1"," ms"," ms"," dB","",""};
@@ -171,12 +172,27 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  }
  void history(juce::Graphics& g){
   using namespace clskin;panel(g,tr("HISTOIRE ET CARACTÈRE","HISTORY AND CHARACTER"));
-  int m=model(selected);enclosure(g,R{140,260,480,250},selected,m,false);
-  const char* fr[]={"Famille FET : attaques rapides et dynamique énergique.","Famille optique : réponse progressive et relâchement dépendant du signal.","Famille VCA : contrôle dynamique précis, adapté aux bus.","Famille VCA : réponse plus vive pour les transitoires.","Famille Vari-Mu : compression douce et caractère harmonique.","Famille pont de diodes : coloration et densité.","Famille optique : enveloppe douce et coloration réduite.","Famille numérique : courbe précise et sans coloration ajoutée."};
-  const char* en[]={"FET family: fast attack and energetic dynamics.","Optical family: gradual response and program-dependent release.","VCA family: accurate dynamics for buses.","VCA family: faster transient response.","Vari-Mu family: soft compression and harmonic character.","Diode bridge family: coloration and density.","Optical family: gentle envelope and reduced coloration.","Digital family: precise curve with no added coloration."};
-  drawLabel(g,liberty::models[m].name,R{670,260,780,70},40,cream,true);drawLabel(g,tr(fr[m],en[m]),R{670,350,780,90},22,cream);
-  drawLabel(g,tr("Profil expérimental original Liberty, pas une émulation mesurée.","Original experimental Liberty profile, not a measured emulation."),R{670,455,780,65},18,muted);
-  button(g,R{145,550,470,48},tr("ÉDITER LE COMPRESSEUR","EDIT COMPRESSOR"),[this]{screen=Screen::Detail;});
+  const int m=model(selected);const auto& entry=clhistory::entries[size_t(m)];
+  enclosure(g,R{120,251,430,250},selected,m,false);
+  drawLabel(g,tr("REPÈRES HISTORIQUES","HISTORICAL LANDMARKS"),R{127,517,416,27},19,muted,false,juce::Justification::centred,true);
+  drawLabel(g,m==7?tr("ÈRE NUMÉRIQUE","DIGITAL ERA"):u(entry.era),R{127,550,416,46},32,cream,true,juce::Justification::centred);
+  drawLabel(g,u(entry.reference),R{127,607,416,38},20,cream,false,juce::Justification::centred,true);
+  drawLabel(g,tr("Référence de famille, pas une copie","Family reference, not a clone"),R{127,650,416,27},17,muted,false,juce::Justification::centred);
+  button(g,R{125,709,420,48},tr("ÉDITER LE COMPRESSEUR","EDIT COMPRESSOR"),[this]{screen=Screen::Detail;});
+  const juce::String tabs[]={tr("HISTOIRE","HISTORY"),tr("TECHNOLOGIE","TECHNOLOGY"),tr("RÉGLAGES & USAGES","SETTINGS & USES")};
+  for(int t=0;t<3;++t)button(g,R{580.f+t*299.f,247,284,46},tabs[t],[this,t]{historyPage=t;},false,historyPage==t,18);
+  const char* frTitles[]={"Origines et évolution","Place dans les studios","Moteur Liberty","Caractère et limites","Point de départ","Conseils et chaînes"};
+  const char* enTitles[]={"Origins and evolution","Studio legacy","Liberty engine","Character and limits","Starting point","Tips and chains"};
+  const auto& paragraphs=french?entry.fr:entry.en;
+  for(int i=0;i<2;++i){
+   int k=historyPage*2+i;float y=315.f+i*218.f;R section{580,y,882,204};
+   surface(g,section,navy,midnight,10,goldDark);
+   drawLabel(g,tr(frTitles[k],enTitles[k]),R{603,y+13,836,34},26,cream,true);
+   g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(23.f)));
+   g.drawFittedText(u(paragraphs[size_t(k)]),R{603,y+56,836,133}.toNearestInt(),juce::Justification::topLeft,5,.90f);
+  }
+  g.setColour(muted);g.setFont(juce::Font(juce::FontOptions(17.f)));
+  g.drawFittedText(tr("Les valeurs proposées concernent les commandes Liberty. Ajustez le seuil au signal et comparez à volume égal. Les références historiques ne sont pas des émulations mesurées.","Suggested values refer to Liberty controls. Adjust threshold to the signal and compare at matched levels. Historical references are not measured emulations."),R{580,762,882,81}.toNearestInt(),juce::Justification::topLeft,3,.94f);
  }
  void routing(juce::Graphics& g){
   using namespace clskin;panel(g,tr("ROUTAGE DU SIGNAL","SIGNAL ROUTING"));
@@ -190,7 +206,21 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  juce::Point<float> logical(juce::Point<float> pt)const{return {(pt.x-xOffset)/scale,(pt.y-yOffset)/scale};}
 public:
  explicit Editor(Processor& processor):AudioProcessorEditor(&processor),p(processor){
-  setOpaque(true);setResizable(false,false);snapshotA=p.state.copyState();snapshotB=snapshotA.createCopy();setSize(1120,651);startTimerHz(20);
+  setOpaque(true);
+  // Preserve the Legends canvas ratio; fit the available desktop, not physical pixel count.
+  int availableW=1600,availableH=930;
+  if(auto* display=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()){
+   availableW=std::max(480,display->userArea.getWidth()-32);
+   availableH=std::max(280,display->userArea.getHeight()-72);
+  }
+  const float maxScale=std::min({1.25f,availableW/1600.f,availableH/930.f});
+  const float minScale=std::min(.70f,maxScale);
+  const float initialScale=std::min(.90f,maxScale);
+  setResizable(true,true);
+  setResizeLimits(int(std::floor(1600*minScale)),int(std::floor(930*minScale)),int(std::floor(1600*maxScale)),int(std::floor(930*maxScale)));
+  if(auto* c=getConstrainer())c->setFixedAspectRatio(1600.0/930.0);
+  snapshotA=p.state.copyState();snapshotB=snapshotA.createCopy();
+  setSize(int(std::floor(1600*initialScale)),int(std::floor(930*initialScale)));startTimerHz(20);
  }
  ~Editor()override{stopTimer();if(dragging)dragging->endChangeGesture();}
  void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;}
