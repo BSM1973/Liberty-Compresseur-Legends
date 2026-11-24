@@ -1,0 +1,2 @@
+# TITANIUM RED
+Graphite #1C1F24, titane #AAB2BC, carmin #A9253F, ivoire #E9E5DB, menthe #49C5B0. Pas de bleu nuit/doré. Familles : FET carmin, optique ivoire, VCA aluminium, Vari-Mu prune, diode émeraude, PWM orange, numérique graphite, spectral violet. FR par défaut, EN sélectionnable, texte UTF-8 explicite via String::fromUTF8, /utf-8 MSVC. Pas de bitmap statique pour les commandes. Taille initiale 940 x 480. Validation réelle à 13 pouces et en hôte à effectuer. Objectif 60 modèles/400 presets, routage 8 slots, MIDI Learn, navigateur et encyclopédie.

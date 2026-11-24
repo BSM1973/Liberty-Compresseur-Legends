@@ -1,0 +1,41 @@
+name: Compresseur Legends v0.1.1
+on: [workflow_dispatch, push]
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure macOS ARM64
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -DBUILD_PLUGIN=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+      - name: Configure Windows x64
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -A x64 -DBUILD_PLUGIN=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+      - name: DSP tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Package macOS bundles
+        if: runner.os == 'macOS'
+        run: |
+          cd build/CompresseurLegends_artefacts/Release
+          test -d AU && test -d VST3 && test -d Standalone
+          tar -czf ../../../Compresseur-Legends-v0.1.1-macOS-arm64.tar.gz AU VST3 Standalone
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location build/CompresseurLegends_artefacts/Release
+          if (!(Test-Path VST3) -or !(Test-Path Standalone)) { throw "Missing plugin outputs" }
+          Compress-Archive -Path VST3,Standalone -DestinationPath ../../../Compresseur-Legends-v0.1.1-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Compresseur-Legends-v0.1.1-${{ matrix.os }}
+          path: |
+            Compresseur-Legends-v0.1.1-*.zip
+            Compresseur-Legends-v0.1.1-*.tar.gz
+          if-no-files-found: error
