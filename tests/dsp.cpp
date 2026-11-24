@@ -61,6 +61,15 @@ int main(){
  Parameters ap;ap.model=0;ap.analog=true;ap.ratio=4;ap.allButtons=false;float normal=nominalReduction(-3,characterModel(ap),ap);ap.allButtons=true;require(nominalReduction(-3,characterModel(ap),ap)>normal,"all buttons transfer");
  ap.model=4;ap.allButtons=false;require(characterRatio(24,ap)>characterRatio(0,ap),"variable mu ratio");
  require(characterKeys.size()==60,"sixty characters");
+ // PRO FFT exact reconstruction at unity across all resolutions.
+ for(int fft:{512,1024,2048,4096}){ProSpectral sp;sp.prepare();ProSettings ps;ps.fft=fft;for(auto& b:ps.bands)b.ratio=1;
+  for(int n=0;n<fft*3;++n){float a=n==fft?.5f:0,b=a;sp.process(a,b,a,b,ps,48000,0,0,1,1,false);require(std::abs(a-(n==2*fft?.5f:0))<3e-4f,"PRO FFT unity/latency");}}
+ ProSettings ps;ps.count=6;for(auto& b:ps.bands)b.ratio=1;ProMulti pm;pm.reset();
+ for(int n=0;n<10000;++n){float a=.7f*std::sin(n*.17f),b=.3f*std::cos(n*.21f),x=a,y=b;pm.process(a,b,a,b,ps,48000,0,0,1,1);require(std::abs(a-x)+std::abs(b-y)<2e-6f,"six-band complementary unity");}
+ for(auto& b:ps.bands)b.mute=true;float a=.5f,b=.2f;pm.process(a,b,a,b,ps,48000,0,0,1,1);require(a==0&&b==0,"all muted");
+ for(auto& b:ps.bands){b.mute=false;b.ratio=4;}ps.link=0;pm.reset();for(int n=0;n<48000;++n){a=.8f;b=.01f;pm.process(a,b,a,b,ps,48000,0,0,1,1);}require(std::abs(b-.01f)<1e-5f&&a<.8f,"unlinked right unchanged");
+ ps.link=1;pm.reset();for(int n=0;n<48000;++n){a=.8f;b=.01f;pm.process(a,b,a,b,ps,48000,0,0,1,1);}require(b<.009f,"linked right follows");
+ rack.params={};rack.parallel=true;rack.configureLatency(0,true,4096);int proLatency=rack.latency();for(int n=0;n<=proLatency;++n){l=r=n==0?1.f:0.f;rack.process(l,r);require(std::abs(l-(n==proLatency?1.f:0.f))<1e-6f,"PRO rack delay");}rack.configureLatency(0,false);rack.reset();rack.parallel=false;
  std::set<std::string> fingerprints;int series=0,parallelCount=0;
  for(int i=0;i<factoryCount;++i){auto p=factoryPreset(i);p.parallel?++parallelCount:++series;std::ostringstream key;key<<p.parallel<<':'<<p.balance;
   require(p.slots[0].enabled,"preset A active");require(!p.parallel||p.slots[4].enabled,"preset B active");

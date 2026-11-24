@@ -6,6 +6,7 @@
 #include <complex>
 #include <vector>
 #include "Character.h"
+#include "ProDSP.h"
 namespace liberty {
 inline float db(float x){return 20.f*std::log10(std::max(x,1.e-9f));}
 inline float gain(float x){return std::pow(10.f,x*.05f);}
@@ -73,7 +74,7 @@ inline constexpr std::array<Model,modelCount> models {{
  {"Spectral Master",1.5f,1.8f,10.0f,0.2f,0.0f,0.65f,false,9},
  {"Spectral Focus",0.4f,0.65f,2.0f,0.02f,0.0f,0.15f,false,9}
 }};
-struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;int stereoMode=0;bool autoGain=false,delta=false;bool analog=false,allButtons=false;float character=.65f;};
+struct Parameters{int model=0;bool enabled=false;float threshold=-18.f,ratio=4.f,attack=10.f,release=100.f,makeup=0.f,mix=1.f,color=0.f;int stereoMode=0;bool autoGain=false,delta=false;bool analog=false,allButtons=false;float character=.65f;ProSettings pro{};};
 inline Model characterModel(const Parameters& p){
  Model m=models[size_t(std::clamp(p.model,0,modelCount-1))];if(!p.analog)return m;
  const auto& c=characterProfile(p.model);float a=std::clamp(p.character,0.f,1.f);
@@ -157,22 +158,30 @@ class Slot{
  float sr=48000.f,env=0.f,slow=0.f,power=0.f,previous=0.f,applied=0.f;
  float lowL=0,lowR=0,detLowL=0,detLowR=0,bandEnv[4]{},bandPower[4]{},bandSlow[4]{},lastDetector=0;
  float splitL[3]{},splitR[3]{},splitDL[3]{},splitDR[3]{};
- Spectral spectral; SampleDelay signalDelay,dryDelay;
+ Spectral spectral; ProSpectral proSpectral;ProMulti proMulti;ProEQ proEQ;SampleDelay signalDelay,dryDelay,proMonitorDelay;bool lastPro=false;int lastProSize=0,lastProCount=0;
  float inPower=0,outPower=0,autoDb=0;
  int lastModel=-1;bool wasEnabled=false,lastAnalog=false;
  CharacterDC dcL,dcR;float dcPole=.999f;
  float cachedAttack=-1,cachedRelease=-1,cachedRate=-1,cachedA=0,cachedR=0,cachedSlow=0,cachedRms=0;
  static float coefficient(float ms,float sr){return std::exp(-1000.f/(std::max(.05f,ms)*sr));}
 public:
- void prepare(float rate){sr=std::max(1.f,rate);dcPole=std::exp(-6.283185307f*5.f/sr);signalDelay.prepare(int(sr*.01f)+Spectral::N+8);dryDelay.prepare(int(sr*.01f)+Spectral::N+8);spectral.prepare();reset();}
- void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;lastAnalog=false;dcL.reset();dcR.reset();}
+ void prepare(float rate){sr=std::max(1.f,rate);dcPole=std::exp(-6.283185307f*5.f/sr);signalDelay.prepare(int(sr*.01f)+4096+8);dryDelay.prepare(int(sr*.01f)+4096+8);proMonitorDelay.prepare(4096);spectral.prepare();proSpectral.prepare();reset();}
+ void reset(){env=slow=power=previous=applied=0.f;lowL=lowR=detLowL=detLowR=lastDetector=0;for(int i=0;i<4;++i)bandEnv[i]=bandPower[i]=bandSlow[i]=0;for(int i=0;i<3;++i)splitL[i]=splitR[i]=splitDL[i]=splitDR[i]=0;signalDelay.reset();dryDelay.reset();spectral.reset();inPower=outPower=autoDb=0;cachedRate=-1;lastModel=-1;wasEnabled=false;lastAnalog=false;dcL.reset();dcR.reset();proSpectral.reset();proMulti.reset();proEQ.reset();proMonitorDelay.reset();lastPro=false;lastProSize=lastProCount=0;}
  float gr()const{return applied;}
  float detectorLevel()const{return lastDetector;}
- float displayReduction(int model,int group)const{if(!wasEnabled)return 0;const auto& m=models[size_t(std::clamp(model,0,modelCount-1))];if(m.architecture==9)return spectral.groupReduction(group);int n=m.architecture==5?2:m.architecture==7?3:m.architecture==8?4:0;if(group<0||group>=n)return 0;return m.architecture==5?std::max(bandEnv[group],m.memory*bandSlow[group]):bandEnv[group];}
+ float displayReduction(int model,int group)const{if(!wasEnabled)return 0;const auto& m=models[size_t(std::clamp(model,0,modelCount-1))];if(lastPro)return m.architecture==9?proSpectral.meter(group):proMulti.meter(group);if(m.architecture==9)return spectral.groupReduction(group);int n=m.architecture==5?2:m.architecture==7?3:m.architecture==8?4:0;if(group<0||group>=n)return 0;return m.architecture==5?std::max(bandEnv[group],m.memory*bandSlow[group]):bandEnv[group];}
+ float proBandMeter(int group)const{return !wasEnabled||!lastPro?0:(models[size_t(std::clamp(lastModel,0,modelCount-1))].architecture==9?proSpectral.bandMeter(group):proMulti.meter(group));}
  void core(float& l,float& r,const Parameters& p,float scL,float scR,bool external){
   if(!p.enabled){applied=lastDetector=0;return;}
   const auto m=characterModel(p);
   const float dl=external?scL:l,dr=external?scR:r;
+  if(p.pro.enabled&&(m.architecture==5||m.architecture>=7)){
+   proEQ.prepare(p.pro,sr);float a=proEQ.process(dl,0),b=proEQ.process(dr,1);
+   float ml=l,mr=r;
+   if(m.architecture==9){proSpectral.process(l,r,a,b,p.pro,sr,m.knee,p.makeup,m.attackScale,m.releaseScale,true);applied=proSpectral.reduction();lastDetector=proSpectral.detector();if(p.pro.listen){ml=a;mr=b;proMonitorDelay.process(ml,mr,proFFT(p.pro.fft));l=ml;r=mr;}}
+   else{proMulti.process(l,r,a,b,p.pro,sr,m.knee,p.makeup,m.attackScale,m.releaseScale);applied=proMulti.reduction();lastDetector=proMulti.detector();if(p.pro.listen){l=a;r=b;}}
+   return;
+  }
   if(m.architecture==9){spectral.process(l,r,dl,dr,sr,m,p,external);applied=spectral.reductionDb();lastDetector=spectral.detector();return;}
   if(m.architecture==7||m.architecture==8){
    int bands=m.architecture==7?3:4;const float hz3[]={180,2500,0},hz4[]={120,600,3500};const float* hz=bands==3?hz3:hz4;
@@ -233,27 +242,31 @@ public:
    l+=(wa-l)*mix;r+=(wb-r)*mix;
   }else{l+=(shape(l*g)-l)*mix;r+=(shape(r*g)-r)*mix;}
  }
- void process(float& l,float& r,const Parameters& p,float scL=0,float scR=0,bool external=false,int lookahead=0,bool spectralPad=false){
+ void process(float& l,float& r,const Parameters& p,float scL=0,float scR=0,bool external=false,int lookahead=0,int spectralPad=0){
   const auto& m=models[size_t(std::clamp(p.model,0,modelCount-1))];
   if(!p.enabled&&!wasEnabled&&lookahead==0&&!spectralPad){applied=lastDetector=0;return;}
   if(p.model!=lastModel||p.enabled!=wasEnabled){reset();lastModel=p.model;wasEnabled=p.enabled;lastAnalog=p.analog;}if(lastAnalog!=p.analog){dcL.reset();dcR.reset();lastAnalog=p.analog;}
-  if(!lookahead&&!spectralPad&&m.architecture!=9&&!p.stereoMode&&!p.autoGain&&!p.delta){core(l,r,p,scL,scR,external);return;}
+  bool proOn=p.enabled&&p.pro.enabled&&(m.architecture==5||m.architecture>=7);
+  int fftSize=proOn&&m.architecture==9?proFFT(p.pro.fft):Spectral::N;
+  if(lastPro!=proOn||lastProSize!=fftSize||lastProCount!=proCount(p.pro)){proSpectral.reset();proMulti.reset();proEQ.reset();proMonitorDelay.reset();lastPro=proOn;lastProSize=fftSize;lastProCount=proCount(p.pro);}
+  if(!proOn&&!lookahead&&!spectralPad&&m.architecture!=9&&!p.stereoMode&&!p.autoGain&&!p.delta){core(l,r,p,scL,scR,external);return;}
   float detectorL=external?scL:l,detectorR=external?scR:r;
   float dryL=l,dryR=r;const bool spectralOn=p.enabled&&m.architecture==9;
-  const int total=lookahead+(spectralPad||spectralOn?Spectral::N:0);
+  const int padding=std::max(spectralPad,spectralOn?fftSize:0);const int total=lookahead+padding;
   dryDelay.process(dryL,dryR,total);
   if(!p.enabled){l=dryL;r=dryR;return;}
-  signalDelay.process(l,r,lookahead+(spectralPad&&!spectralOn?Spectral::N:0));
+  signalDelay.process(l,r,lookahead+padding-(spectralOn?fftSize:0));
   // Detector leads the delayed signal by the lookahead only. Spectral padding
   // on nonspectral stages is compensation; delay detector with the signal
   // when no explicit external detector or lookahead is selected.
   bool useDetector=external||lookahead>0;
-  if(spectralPad&&!spectralOn&&!external&&lookahead==0){detectorL=l;detectorR=r;}
-  auto wet=p;wet.mix=1;float keep=0;
-  if(p.stereoMode){float mid=.5f*(l+r),side=.5f*(l-r);keep=p.stereoMode==1?.5f*(dryL-dryR):.5f*(dryL+dryR);l=r=p.stereoMode==1?mid:side;
-   float dd=p.stereoMode==1?.5f*(detectorL+detectorR):.5f*(detectorL-detectorR);detectorL=detectorR=dd;}
+  if(padding>(spectralOn?fftSize:0)&&!external&&lookahead==0){detectorL=l;detectorR=r;}
+  auto wet=p;wet.mix=1;float keep=0;bool monitoring=proOn&&p.pro.listen;int stereoMode=monitoring?0:p.stereoMode;
+  if(stereoMode){float mid=.5f*(l+r),side=.5f*(l-r);keep=stereoMode==1?.5f*(dryL-dryR):.5f*(dryL+dryR);l=r=stereoMode==1?mid:side;
+   float dd=stereoMode==1?.5f*(detectorL+detectorR):.5f*(detectorL-detectorR);detectorL=detectorR=dd;}
   core(l,r,wet,detectorL,detectorR,useDetector);
-  if(p.stereoMode){float z=.5f*(l+r);if(p.stereoMode==1){l=z+keep;r=z-keep;}else{l=keep+z;r=keep-z;}}
+  if(stereoMode){float z=.5f*(l+r);if(stereoMode==1){l=z+keep;r=z-keep;}else{l=keep+z;r=keep-z;}}
+  if(monitoring)return;
   if(p.autoGain){float c=1-std::exp(-1.f/(.4f*sr));inPower+=c*(.5f*(dryL*dryL+dryR*dryR)-inPower);outPower+=c*(.5f*(l*l+r*r)-outPower);
    float target=inPower>1e-7f&&outPower>1e-9f?std::clamp(10.f*std::log10(inPower/outPower),-12.f,12.f):0;autoDb+=c*(target-autoDb);float g=gain(autoDb);l*=g;r*=g;}
   l=dryL+(l-dryL)*p.mix;r=dryR+(r-dryR)*p.mix;if(p.delta){l=dryL-l;r=dryR-r;}
@@ -261,22 +274,23 @@ public:
 
 };
 class Rack{
- std::array<Slot,8> slots;SampleDelay parallelDelay;int lookahead=0;bool spectralPad=false;
+ std::array<Slot,8> slots;SampleDelay parallelDelay;int lookahead=0,spectralPad=0;
 public:
  std::array<Parameters,8> params{};std::array<bool,8> external{};bool parallel=false;float balance=.5f;
- void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+Spectral::N+8));}
+ void prepare(float sampleRate){for(auto& s:slots)s.prepare(sampleRate);parallelDelay.prepare(4*(int(sampleRate*.01f)+4096+8));}
  void reset(){for(auto& s:slots)s.reset();parallelDelay.reset();}
- void configureLatency(int la,bool spectral){if(la!=lookahead||spectral!=spectralPad){lookahead=la;spectralPad=spectral;reset();}}
- int latency()const{return 8*(lookahead+(spectralPad?Spectral::N:0));}
+ void configureLatency(int la,bool spectral,int maxFFT=Spectral::N){int pad=spectral?std::clamp(maxFFT,Spectral::N,4096):0;if(la!=lookahead||pad!=spectralPad){lookahead=la;spectralPad=pad;reset();}}
+ int latency()const{return 8*(lookahead+spectralPad);}
  float gr(size_t i)const{return slots.at(i).gr();}
  float detectorLevel(size_t i)const{return slots.at(i).detectorLevel();}
+ float proBandMeter(size_t i,int group)const{return slots.at(i).proBandMeter(group);}
  float displayReduction(size_t i,int group)const{return slots.at(i).displayReduction(params.at(i).model,group);}
  void process(float& l,float& r,float scL=0.f,float scR=0.f,bool hasExternal=false){
   if(!parallel){for(size_t i=0;i<8;++i)slots[i].process(l,r,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);return;}
   float aL=l,aR=r,bL=l,bR=r;
   for(size_t i=0;i<4;++i)slots[i].process(aL,aR,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);
   for(size_t i=4;i<8;++i)slots[i].process(bL,bR,params[i],scL,scR,hasExternal&&external[i],lookahead,spectralPad);
-  const float b=std::clamp(balance,0.f,1.f);l=aL+(bL-aL)*b;r=aR+(bR-aR)*b;parallelDelay.process(l,r,4*(lookahead+(spectralPad?Spectral::N:0)));
+  const float b=std::clamp(balance,0.f,1.f);l=aL+(bL-aL)*b;r=aR+(bR-aR)*b;parallelDelay.process(l,r,4*(lookahead+spectralPad));
  }
 };
 }

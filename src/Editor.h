@@ -27,9 +27,9 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  using R=clskin::R;
  using AP=Processor::APVTS;
  Processor& p;
- enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis,Advanced,Character};
+ enum class Screen{Rack,Detail,Library,History,Routing,Presets,Analysis,Advanced,Character,Pro};
  Screen screen=Screen::Rack;
- int selected=0;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;
+ int selected=0,proBand=0;bool proEQPage=false;int historyPage=0,libraryPage=0,presetPage=0,presetCategory=-1,lastPreset=-1;bool onlyFavorites=false;std::array<bool,liberty::factoryCount> favorites{};juce::TextEditor presetSearch;
  std::array<std::array<float,120>,8> grHistory{};int grHead=0;bool french=true,viewB=false;
  juce::ValueTree snapshotA,snapshotB;
  struct Hot {R bounds;std::function<void()> click;juce::RangedAudioParameter* param=nullptr;};
@@ -45,7 +45,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
  bool on(int slot){return raw(slot,"on")>.5f;}
  void set(juce::RangedAudioParameter* a,float v){if(!a)return;a->beginChangeGesture();a->setValueNotifyingHost(juce::jlimit(0.f,1.f,v));a->endChangeGesture();}
  void setRaw(int slot,const char* key,float v){auto* a=param(slot,key);set(a,a->convertTo0to1(v));}
- void swapSlots(int a,int b){if(b<0||b>=8)return;for(auto key:{"on","model","threshold","ratio","attack","release","makeup","mix","color","external","stereo","auto","delta","analog","character","allButtons"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}selected=b;}
+ void swapSlots(int a,int b){if(b<0||b>=8)return;for(auto key:{"on","model","threshold","ratio","attack","release","makeup","mix","color","external","stereo","auto","delta","analog","character","allButtons"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}for(auto key:{"pro","bandCount","fft","link","scHP","scLP","scBell","scGain","scListen"}){float x=raw(a,key),y=raw(b,key);setRaw(a,key,y);setRaw(b,key,x);}for(int j=0;j<5;++j){auto key=Processor::crossKey(j);float x=raw(a,key.toRawUTF8()),y=raw(b,key.toRawUTF8());setRaw(a,key.toRawUTF8(),y);setRaw(b,key.toRawUTF8(),x);}for(int j=0;j<6;++j)for(auto field:{"threshold","ratio","attack","release","solo","mute","bypass"}){auto key=Processor::bandKey(j,field);float x=raw(a,key.toRawUTF8()),y=raw(b,key.toRawUTF8());setRaw(a,key.toRawUTF8(),y);setRaw(b,key.toRawUTF8(),x);}selected=b;}
  void toggleAB(){if(viewB){snapshotB=p.state.copyState();p.state.replaceState(snapshotA.createCopy());}else{snapshotA=p.state.copyState();p.state.replaceState(snapshotB.createCopy());}viewB=!viewB;}
  static juce::Colour color(int m){constexpr unsigned c[]={0xff8d2638,0xff655e50,0xff58616b,0xff536677,0xff643654,0xff286054,0xff756956,0xff41454d,0xff8d2638,0xff763344,0xff6c6352,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff8d2638,0xff763344,0xff655e50,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xff41454d,0xff4b505b,0xff41454d,0xff4b505b,0xff64538e,0xff64538e,0xff7462b0,0xff64538e,0xff41454d,0xff4b505b,0xff8d2638,0xff763344,0xff655e50,0xff756956,0xff58616b,0xff536677,0xff643654,0xff75445e,0xff286054,0xff31675b,0xffaa6039,0xff94582f,0xff64538e,0xff64538e,0xff7462b0,0xff64538e,0xff59498b,0xff6857a5,0xff59498b,0xff7462b0};return juce::Colour(c[juce::jlimit(0,liberty::modelCount-1,m)]);}
  static const char* family(int m){constexpr const char* f[]={"FET","OPTO","VCA","VCA","VARI-MU","DIODE","OPTO","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","DIGITAL","DIGITAL","DIGITAL","DIGITAL","DUAL BAND","DUAL BAND","DUAL BAND","DUAL BAND","DIGITAL","DIGITAL","FET","FET","OPTO","OPTO","VCA","VCA","VARI-MU","VARI-MU","DIODE","DIODE","PWM-INSPIRED","PWM-INSPIRED","MULTIBAND","MULTIBAND","MULTIBAND","MULTIBAND","SPECTRAL","SPECTRAL","SPECTRAL","SPECTRAL"};return f[m];}
@@ -159,7 +159,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
    for(int j=0;j<=3;++j){float y=plot.getY()+plot.getHeight()*j/3;line(g,plot.getX(),y,plot.getRight(),y,amber.withAlpha(.15f));}
    for(int k=0;k<16;++k){float val=slot>=0&&on(slot)?p.displayMeters[slot][k].load():0;float h=plot.getHeight()*std::clamp(val/30.f,0.f,1.f),w=plot.getWidth()/16;g.setColour(amber.withAlpha(.9f));g.fillRect(R{plot.getX()+k*w+1,plot.getBottom()-h,w-2,h});}
   }else if(md.architecture==5||md.architecture==7||md.architecture==8){
-   int n=md.architecture==5?2:md.architecture==7?3:4;float w=r.getWidth()/n;for(int k=0;k<n;++k){float gr=slot>=0&&on(slot)?p.displayMeters[slot][k].load():0;meter(g,R{r.getX()+k*w+2,r.getY(),w-4,r.getHeight()-15},gr,false,true);drawLabel(g,"B"+juce::String(k+1),R{r.getX()+k*w,r.getBottom()-14,w,13},11,skin.text,false,juce::Justification::centred,true);}
+   int n=slot>=0&&raw(slot,"pro")>.5f?juce::jlimit(2,6,int(raw(slot,"bandCount"))):md.architecture==5?2:md.architecture==7?3:4;float w=r.getWidth()/n;for(int k=0;k<n;++k){float gr=slot>=0&&on(slot)?p.displayMeters[slot][k].load():0;meter(g,R{r.getX()+k*w+2,r.getY(),w-4,r.getHeight()-15},gr,false,true);drawLabel(g,"B"+juce::String(k+1),R{r.getX()+k*w,r.getBottom()-14,w,13},11,skin.text,false,juce::Justification::centred,true);}
   }else meter(g,r,slot>=0&&on(slot)?p.meters[slot].load():0,skin.darkMeter);
  }
  void vents(juce::Graphics& g,R r,int kind,bool active){
@@ -186,7 +186,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,"L",R{45,32,33,41},30,goldLight,true,juce::Justification::centred,true);
   drawLabel(g,"LIBERTY MUSIC SOFTWARE",R{106,17,430,20},15,goldLight,false,juce::Justification::centredLeft,true);
   drawLabel(g,"COMPRESSEUR LEGENDS",R{106,40,565,44},38,cream,true);
-  drawLabel(g,"ANALOG PERFECTION  /  v0.5.0",R{108,86,500,20},15,muted);
+  drawLabel(g,"SPECTRAL & MULTIBAND PRO  /  v0.6.0",R{108,86,500,20},15,muted);
   button(g,R{680,32,105,48},"RACK",[this]{screen=Screen::Rack;},false,screen==Screen::Rack);
   button(g,R{796,32,175,48},tr("BIBLIOTHÈQUE","LIBRARY"),[this]{libraryPage=0;screen=Screen::Library;},false,screen==Screen::Library);
   button(g,R{982,32,135,48},tr("ROUTAGE","ROUTING"),[this]{screen=Screen::Routing;},false,screen==Screen::Routing);
@@ -217,7 +217,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
    button(g,R{x+297,y+211,65,25},tr("ÉDITER","EDIT"),[this,i]{selected=i;screen=Screen::Detail;},false,false,11);
    button(g,R{x+297,y+242,65,25},tr("CHOISIR","LOAD"),[this,i]{selected=i;libraryPage=model(i)/8;screen=Screen::Library;},false,false,11);
    button(g,R{x+18,y+282,115,24},tr("HISTOIRE","HISTORY"),[this,i]{selected=i;historyPage=0;screen=Screen::History;},false,false,12);
-   button(g,R{x+140,y+282,106,24},raw(i,"analog")>.5f?"ANALOG ON":"ANALOG",[this,i]{selected=i;screen=Screen::Character;},false,raw(i,"analog")>.5f,12);
+   if(isProModel(m))button(g,R{x+140,y+282,106,24},raw(i,"pro")>.5f?"PRO ON":"PRO",[this,i]{selected=i;proBand=0;proEQPage=false;screen=Screen::Pro;},false,raw(i,"pro")>.5f,12);else button(g,R{x+140,y+282,106,24},raw(i,"analog")>.5f?"ANALOG ON":"ANALOG",[this,i]{selected=i;screen=Screen::Character;},false,raw(i,"analog")>.5f,12);
    button(g,R{x+258,y+282,46,24},"<",[this,i]{swapSlots(i,i-1);},false,false,15);
    button(g,R{x+311,y+282,46,24},">",[this,i]{swapSlots(i,i+1);},false,false,15);
   }
@@ -258,7 +258,7 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   drawLabel(g,p.sidechainAvailable.load()?tr("Entrée externe active","External input active"):tr("Sans entrée externe : détection interne","No external input: internal detection"),R{130,692,392,35},16,muted);
   button(g,R{130,742,392,45},tr("COURBES & ANALYSE","CURVES & ANALYSIS"),[this]{screen=Screen::Analysis;});
   button(g,R{580,805,440,45},tr("TRAITEMENTS AVANCÉS","ADVANCED PROCESSING"),[this]{screen=Screen::Advanced;});
-  button(g,R{1050,805,420,45},"ANALOG PERFECTION",[this]{screen=Screen::Character;},false,raw(selected,"analog")>.5f);
+  if(isProModel(model(selected)))button(g,R{1050,805,420,45},"SPECTRAL / MULTIBAND PRO",[this]{proBand=0;proEQPage=false;screen=Screen::Pro;},false,raw(selected,"pro")>.5f);else button(g,R{1050,805,420,45},"ANALOG PERFECTION",[this]{screen=Screen::Character;},false,raw(selected,"analog")>.5f);
  }
  void library(juce::Graphics& g){
   using namespace clskin;panel(g,tr("BIBLIOTHÈQUE DE COMPRESSEURS","COMPRESSOR LIBRARY")+"  /  "+juce::String(selected+1));
@@ -370,6 +370,45 @@ class Editor final:public juce::AudioProcessorEditor,private juce::Timer {
   g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(23.f)));g.drawFittedText(tr(fr,en),R{650,560,790,115}.toNearestInt(),juce::Justification::topLeft,4,.9f);
   g.setColour(muted);g.setFont(juce::Font(juce::FontOptions(18.f)));g.drawFittedText(tr("En compatibilité, le rendu v0.4.1 est conservé. Analog active les nouveaux algorithmes. Les profils ne sont pas des émulations mesurées. Comparer à niveau égal ; utiliser l'oversampling pour la coloration prononcée.","Legacy preserves v0.4.1 processing. Analog enables the new algorithms. Profiles are not measured hardware emulations. Compare at matched level; use oversampling for strong coloration."),R{650,715,790,110}.toNearestInt(),juce::Justification::topLeft,4,.9f);
  }
+ bool isProModel(int m){int a=liberty::models[size_t(m)].architecture;return a==5||a>=7;}
+ void proKnob(juce::Graphics& g,const juce::String& key,float x,float y,float radius,const juce::String& name,const juce::String& unit,float multiplier=1){
+  auto* a=param(selected,key.toRawUTF8());knobDraw(g,x,y,radius,a->getValue(),name,juce::String(raw(selected,key.toRawUTF8())*multiplier,unit==" Hz"?0:1)+unit,true,a);
+ }
+ void proPage(juce::Graphics& g){
+  using namespace clskin;int m=model(selected);bool spectral=liberty::models[size_t(m)].architecture==9;
+  panel(g,spectral?"SPECTRAL PRO":"MULTIBAND PRO");
+  button(g,R{125,235,145,40},tr("ÉDITER","EDIT"),[this]{screen=Screen::Detail;});
+  button(g,R{280,235,180,40},tr("COMPATIBILITÉ","LEGACY"),[this]{setRaw(selected,"pro",0);setRaw(selected,"scListen",0);},false,raw(selected,"pro")<.5f,15);
+  button(g,R{470,235,110,40},"PRO",[this]{setRaw(selected,"pro",1);},false,raw(selected,"pro")>.5f);
+  button(g,R{590,235,180,40},tr("BANDES","BANDS"),[this]{proEQPage=false;},false,!proEQPage);
+  button(g,R{780,235,200,40},"SIDECHAIN EQ",[this]{proEQPage=true;},false,proEQPage);
+  button(g,R{990,235,175,40},"ANALOG",[this]{screen=Screen::Character;});
+  drawLabel(g,juce::String(p.getLatencySamples())+" samples",R{1180,235,285,40},18,muted,false,juce::Justification::centredRight);
+  if(proEQPage){
+   drawLabel(g,tr("FILTRES DU SIGNAL DE DÉTECTION","DETECTOR SIGNAL FILTERS"),R{140,305,1300,44},27,cream,true);
+   proKnob(g,"scHP",250,450,46,"HP"," Hz");proKnob(g,"scLP",480,450,46,"LP"," Hz");proKnob(g,"scBell",710,450,46,tr("Fréquence","Frequency")," Hz");proKnob(g,"scGain",940,450,46,tr("Gain cloche","Bell gain")," dB");proKnob(g,"link",1170,450,46,"Stereo Link"," %",100);
+   button(g,R{450,645,610,57},tr("ÉCOUTE SIDECHAIN","SIDECHAIN LISTEN"),[this]{setRaw(selected,"scListen",raw(selected,"scListen")>.5f?0:1);},false,raw(selected,"scListen")>.5f);
+   drawLabel(g,tr("Écoute au niveau du slot : les modules suivants restent actifs. Les filtres ne traitent que la détection.","Slot monitoring: downstream modules remain active. Filters affect only detection."),R{130,755,1340,70},20,muted,false,juce::Justification::centred);
+   return;
+  }
+  int bands=juce::jlimit(2,6,int(raw(selected,"bandCount")));proBand=juce::jlimit(0,bands-1,proBand);
+  drawLabel(g,tr("BANDES","BANDS"),R{135,292,130,35},17,muted);for(int i=2;i<=6;++i)button(g,R{270.f+(i-2)*65,292,58,35},juce::String(i),[this,i]{setRaw(selected,"bandCount",float(i));},false,bands==i,15);
+  if(spectral){drawLabel(g,"FFT",R{640,292,65,35},18,muted);for(int i=0;i<4;++i)button(g,R{710.f+i*118,292,110,35},juce::String(512<<i),[this,i]{setRaw(selected,"fft",float(i));},false,int(raw(selected,"fft"))==i,15);}
+  drawLabel(g,tr("Cliquer sur une bande pour l'éditer","Click a band to edit"),R{1190,290,277,39},16,muted,false,juce::Justification::centredRight);
+  liberty::ProSettings config;config.count=bands;for(int i=0;i<5;++i)config.cross[i]=raw(selected,Processor::crossKey(i).toRawUTF8());auto cross=liberty::proCross(config,p.processingRate.load());
+  R plot{140,345,1315,235};surface(g,plot,navy,midnight,6,goldDark);
+  float nyquist=std::max(1000.f,p.processingRate.load()*.5f),maxHz=std::min(20000.f,nyquist);
+  auto px=[&](float hz){return plot.getX()+plot.getWidth()*std::clamp(std::log(std::max(20.f,hz)/20.f)/std::log(maxHz/20.f),0.f,1.f);};
+  float left=plot.getX();for(int b=0;b<bands;++b){float right=b==bands-1?plot.getRight():px(cross[b]);if(right>left){R zone{left,plot.getY()+3,right-left,plot.getHeight()-6};g.setColour((b==proBand?gold:amber).withAlpha(b==proBand?.20f:.055f));g.fillRect(zone);hit(zone,[this,b]{proBand=b;});line(g,right,plot.getY(),right,plot.getBottom(),goldLight.withAlpha(.5f));float gr=p.proMeters[selected][b].load();g.setColour(amber.withAlpha(.70f));float h=std::clamp(gr/30.f,0.f,1.f)*155;g.fillRect(R{left+2,plot.getY()+43,std::max(0.f,right-left-4),h});drawLabel(g,"B"+juce::String(b+1)+" / "+juce::String(gr,1)+" dB",R{left+2,plot.getY()+8,std::max(0.f,right-left-4),24},15,cream,false,juce::Justification::centred);}left=right;}
+  if(spectral)for(int k=0;k<16;++k){float hz=(k+.5f)*nyquist/16;float x=px(hz);float h=std::clamp(p.displayMeters[selected][k].load()/30.f,0.f,1.f)*150;line(g,x,plot.getY()+43,x,plot.getY()+43+h,goldLight,2);}
+  for(float hz:{20.f,100.f,1000.f,10000.f,20000.f}){float x=px(hz);drawLabel(g,juce::String(int(hz)),R{x-32,plot.getBottom()-24,64,20},12,muted,false,juce::Justification::centred);}
+  float y=622;int b=proBand;
+  proKnob(g,Processor::bandKey(b,"threshold"),245,y+44,32,tr("Seuil","Threshold")," dB");proKnob(g,Processor::bandKey(b,"ratio"),425,y+44,32,"Ratio",":1");proKnob(g,Processor::bandKey(b,"attack"),605,y+44,32,tr("Attaque","Attack")," ms");proKnob(g,Processor::bandKey(b,"release"),785,y+44,32,tr("Relâchement","Release")," ms");
+  const char* fields[]={"solo","mute","bypass"};const char* labels[]={"SOLO","MUTE","BYPASS"};for(int k=0;k<3;++k){auto key=Processor::bandKey(b,fields[k]);button(g,R{950.f+k*165,y+20,153,42},labels[k],[this,key]{setRaw(selected,key.toRawUTF8(),raw(selected,key.toRawUTF8())>.5f?0:1);},false,raw(selected,key.toRawUTF8())>.5f);}
+  if(b<bands-1)proKnob(g,Processor::crossKey(b),1090,755,25,tr("Crossover haut","Upper crossover")," Hz");
+  if(b>0)proKnob(g,Processor::crossKey(b-1),1300,755,25,tr("Crossover bas","Lower crossover")," Hz");
+  drawLabel(g,tr("Modifier FFT et nombre de bandes à l'arrêt. Les crossovers sont triés dans le DSP.","Change FFT and band count while stopped. Crossovers are sorted in DSP."),R{140,825,815,45},16,muted);
+ }
  void analysis(juce::Graphics& g){
   using namespace clskin;panel(g,tr("ANALYSE DE LA COMPRESSION","COMPRESSION ANALYSIS")+"  /  "+juce::String(selected+1));
   const int m=model(selected);liberty::Parameters settings;settings.model=m;settings.threshold=raw(selected,"threshold");settings.ratio=raw(selected,"ratio");settings.makeup=raw(selected,"makeup");settings.mix=raw(selected,"mix");settings.analog=raw(selected,"analog")>.5f;settings.character=raw(selected,"character");settings.allButtons=raw(selected,"allButtons")>.5f;const auto md=liberty::characterModel(settings);
@@ -411,7 +450,7 @@ public:
  }
  ~Editor()override{stopTimer();if(dragging)dragging->endChangeGesture();}
  void resized()override{scale=std::min(getWidth()/1600.f,getHeight()/930.f);xOffset=(getWidth()-1600*scale)*.5f;yOffset=(getHeight()-930*scale)*.5f;presetSearch.setBounds(juce::Rectangle<float>{382,245,1090,43}.transformedBy(juce::AffineTransform::scale(scale).translated(xOffset,yOffset)).toNearestInt());presetSearch.setFont(juce::Font(juce::FontOptions(20.f*scale)));}
- void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;case Screen::Advanced:advanced(g);break;case Screen::Character:characterPage(g);break;}}
+ void paint(juce::Graphics& g)override{g.fillAll(clskin::midnight);hits.clear();juce::Graphics::ScopedSaveState save(g);g.addTransform(juce::AffineTransform::scale(scale).translated(xOffset,yOffset));backplate(g);switch(screen){case Screen::Rack:board(g);break;case Screen::Detail:detail(g);break;case Screen::Library:library(g);break;case Screen::History:history(g);break;case Screen::Routing:routing(g);break;case Screen::Presets:presets(g);break;case Screen::Analysis:analysis(g);break;case Screen::Advanced:advanced(g);break;case Screen::Character:characterPage(g);break;case Screen::Pro:proPage(g);break;}}
  void mouseDown(const juce::MouseEvent& e)override{auto pt=logical(e.position);if(e.mods.isPopupMenu()){for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)&&it->param){int idx=p.midiIndex(it->param);if(idx<0)return;juce::PopupMenu menu;menu.addItem(1,"MIDI Learn");menu.addItem(2,tr("Effacer l'affectation","Clear mapping"),p.midiCC[idx].load()>=0);menu.addItem(3,tr("Annuler l'apprentissage","Cancel learn"),p.learnTarget.load()>=0);auto safe=juce::Component::SafePointer<Editor>(this);menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),[safe,idx](int choice){if(safe==nullptr)return;if(choice==1)safe->p.learnTarget.store(idx);if(choice==2)safe->p.midiCC[idx].store(-1);if(choice==3)safe->p.learnTarget.store(-1);safe->repaint();});return;}return;}if(!e.mods.isLeftButtonDown())return;for(auto it=hits.rbegin();it!=hits.rend();++it)if(it->bounds.contains(pt)){if(it->param){dragging=it->param;startValue=dragging->getValue();startY=pt.y;dragging->beginChangeGesture();}else if(it->click){auto f=it->click;f();syncSearch();}repaint();return;}}
  void mouseDrag(const juce::MouseEvent& e)override{if(dragging){dragging->setValueNotifyingHost(juce::jlimit(0.f,1.f,startValue+(startY-logical(e.position).y)/160.f));repaint();}}
  void mouseUp(const juce::MouseEvent&)override{if(dragging){dragging->endChangeGesture();dragging=nullptr;}}
